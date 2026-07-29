@@ -20,10 +20,10 @@ from playwright.sync_api import sync_playwright
 
 COOKIE_FILE = "cookies.txt"
 PROJECT_URL = "https://replit.com/@karimdeka85/v2ray-vless-server-dashboard-5zip"
-REFRESH_INTERVAL_SECONDS = 30  # زيادة إلى 30 ثانية لتقليل الحمل
+REFRESH_INTERVAL_SECONDS = 30
 WEBVIEW_PATTERN = r"https?://[a-f0-9\-]+\.replit\.dev:\d+"
 KEEP_ALIVE_PORT = 8080
-PING_INTERVAL = 60  # ثانية
+PING_INTERVAL = 60
 
 
 class KeepAliveHandler(BaseHTTPRequestHandler):
@@ -37,7 +37,8 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-type', 'text/html; charset=utf-8')
             self.end_headers()
-            self.wfile.write(b"""
+            # استخدام bytes مع ترميز utf-8
+            html_content = """
             <!DOCTYPE html>
             <html>
             <head>
@@ -63,13 +64,15 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                 </div>
             </body>
             </html>
-            """)
+            """
+            self.wfile.write(html_content.encode('utf-8'))
+            
         elif parsed.path == '/status':
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.end_headers()
             status = f'{{"status": "running", "timestamp": "{datetime.now().isoformat()}", "interval": {REFRESH_INTERVAL_SECONDS}}}'
-            self.wfile.write(status.encode())
+            self.wfile.write(status.encode('utf-8'))
         else:
             self.send_response(404)
             self.end_headers()
