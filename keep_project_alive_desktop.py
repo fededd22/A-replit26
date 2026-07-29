@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-سكربت لتشغيل مشروع Replit وإعادة تشغيل نفسه كل 10 ثواني
+سكربت لتشغيل مشروع Replit - يعيد التشغيل بالكامل كل 10 ثواني
 """
 
 import sys
@@ -9,15 +9,16 @@ import http.cookiejar
 import re
 import os
 import subprocess
+import signal
 from datetime import datetime
 
 from playwright.sync_api import sync_playwright
 
 COOKIE_FILE = "cookies.txt"
 PROJECT_URL = "https://replit.com/@karimdeka85/v2ray-vless-server-dashboard-5zip"
-REFRESH_INTERVAL_SECONDS = 10  # كل 10 ثواني
+REFRESH_INTERVAL_SECONDS = 10
 WEBVIEW_PATTERN = r"https?://[a-f0-9\-]+\.replit\.dev:\d+"
-SCRIPT_NAME = "keep_project_alive_desktop_work2.py"
+SCRIPT_NAME = "keep_project_alive.py"
 
 
 def log(msg: str):
@@ -40,12 +41,17 @@ def netscape_cookie_to_playwright(cookie) -> dict:
 
 
 def load_cookies_for_playwright():
+    if not os.path.exists(COOKIE_FILE):
+        log(f"❌ ملف {COOKIE_FILE} مش موجود")
+        return []
+    
     jar = http.cookiejar.MozillaCookieJar(COOKIE_FILE)
     try:
         jar.load(ignore_discard=True, ignore_expires=True)
-    except FileNotFoundError:
-        log(f"❌ ملف {COOKIE_FILE} مش موجود")
-        sys.exit(1)
+    except Exception as e:
+        log(f"❌ خطأ في تحميل الكوكيز: {e}")
+        return []
+    
     cookies = [netscape_cookie_to_playwright(c) for c in jar]
     log(f"تم تحميل {len(cookies)} كوكي")
     return cookies
@@ -60,7 +66,6 @@ def press_run_button_with_retry(page, max_attempts=10):
         
         selectors = [
             "button:has-text('Run')",
-            "button:has-text('Run') >> visible=true",
             "button[aria-label='Run']",
             "button[aria-label*='Run' i]",
             "[data-testid='run-button']",
@@ -69,24 +74,21 @@ def press_run_button_with_retry(page, max_attempts=10):
             ".run-button",
             "button[class*='run']",
             "button:has(svg[viewBox*='play'])",
-            "button:has(svg[data-icon='play'])",
             "button:has(span:has-text('Run'))",
             "header button:has-text('Run')",
         ]
         
         for selector in selectors:
             try:
-                buttons = page.locator(selector).all()
-                for btn in buttons:
-                    if btn.is_visible(timeout=1000):
-                        text = btn.text_content() or ""
-                        label = btn.get_attribute("aria-label") or ""
-                        
-                        if "Run" in text or "run" in text.lower() or "Run" in label:
-                            btn.click()
-                            log(f"✅ تم الضغط على زر Run")
-                            page.wait_for_timeout(5000)
-                            return True
+                btn = page.locator(selector).first
+                if btn.count() > 0 and btn.is_visible(timeout=1000):
+                    text = btn.text_content() or ""
+                    label = btn.get_attribute("aria-label") or ""
+                    if "Run" in text or "run" in text.lower() or "Run" in label:
+                        btn.click()
+                        log(f"✅ تم الضغط على زر Run")
+                        page.wait_for_timeout(5000)
+                        return True
             except:
                 continue
         
@@ -115,8 +117,8 @@ def press_run_button_with_retry(page, max_attempts=10):
         
         # التحقق من وجود زر Stop
         try:
-            stop_btn = page.locator("button:has-text('Stop')")
-            if stop_btn.count() > 0 and stop_btn.first.is_visible(timeout=2000):
+            stop_btn = page.locator("button:has-text('Stop')").first
+            if stop_btn.count() > 0 and stop_btn.is_visible(timeout=2000):
                 log("✅ المشروع شغال بالفعل")
                 return True
         except:
@@ -130,80 +132,69 @@ def press_run_button_with_retry(page, max_attempts=10):
 
 
 def get_webview_url(page):
-    """استخراج رابط Webview"""
+    """استخراج رابط Webview جديد"""
     log("🔍 البحث عن رابط Webview...")
     
-    for attempt in range(5):
-        page.wait_for_timeout(1500)
-        
-        # البحث في iframes
-        try:
-            iframes = page.locator("iframe[src*='replit.dev']").all()
-            for iframe in iframes:
-                src = iframe.get_attribute("src") or ""
-                match = re.search(WEBVIEW_PATTERN, src)
-                if match:
-                    url = match.group(0)
-                    log(f"✅ تم العثور على رابط Webview: {url}")
-                    return url
-        except:
-            pass
-        
-        # البحث في النص
-        try:
-            body = page.text_content("body") or ""
-            matches = re.findall(WEBVIEW_PATTERN, body)
-            if matches:
-                url = matches[0]
-                log(f"✅ تم العثور على رابط Webview في النص: {url}")
+    # البحث في iframes
+    try:
+        iframes = page.locator("iframe[src*='replit.dev']").all()
+        for iframe in iframes:
+            src = iframe.get_attribute("src") or ""
+            match = re.search(WEBVIEW_PATTERN, src)
+            if match:
+                url = match.group(0)
+                log(f"✅ تم العثور على رابط Webview: {url}")
                 return url
-        except:
-            pass
-        
-        # البحث باستخدام JavaScript
-        try:
-            result = page.evaluate("""
-                () => {
-                    const text = document.body.innerText || '';
-                    const match = text.match(/https?:\\/\\/[a-f0-9\\-]+\\.replit\\.dev:\\d+/);
+    except:
+        pass
+    
+    # البحث في النص
+    try:
+        body = page.text_content("body") or ""
+        matches = re.findall(WEBVIEW_PATTERN, body)
+        if matches:
+            url = matches[0]
+            log(f"✅ تم العثور على رابط Webview: {url}")
+            return url
+    except:
+        pass
+    
+    # البحث باستخدام JavaScript
+    try:
+        result = page.evaluate("""
+            () => {
+                const text = document.body.innerText || '';
+                const match = text.match(/https?:\\/\\/[a-f0-9\\-]+\\.replit\\.dev:\\d+/);
+                if (match) return match[0];
+                
+                const iframes = document.querySelectorAll('iframe');
+                for (let iframe of iframes) {
+                    const match = (iframe.src || '').match(/https?:\\/\\/[a-f0-9\\-]+\\.replit\\.dev:\\d+/);
                     if (match) return match[0];
-                    
-                    const iframes = document.querySelectorAll('iframe');
-                    for (let iframe of iframes) {
-                        const match = (iframe.src || '').match(/https?:\\/\\/[a-f0-9\\-]+\\.replit\\.dev:\\d+/);
-                        if (match) return match[0];
-                    }
-                    return null;
                 }
-            """)
-            if result:
-                log(f"✅ تم العثور على رابط Webview: {result}")
-                return result
-        except:
-            pass
-        
-        log(f"⚠️ محاولة {attempt + 1}/5 للعثور على رابط Webview")
+                return null;
+            }
+        """)
+        if result:
+            log(f"✅ تم العثور على رابط Webview: {result}")
+            return result
+    except:
+        pass
     
     return None
 
 
-def restart_script():
-    """إعادة تشغيل السكربت نفسه"""
-    log("🔄 جاري إعادة تشغيل السكربت...")
-    try:
-        subprocess.Popen(["python3", SCRIPT_NAME])
-        log("✅ تم إعادة تشغيل السكربت")
-        sys.exit(0)
-    except Exception as e:
-        log(f"❌ فشل إعادة التشغيل: {e}")
-        sys.exit(1)
-
-
-def main():
-    log("🚀 بدء تشغيل السكربت")
+def run_once():
+    """تشغيل دورة واحدة فقط"""
+    log("🚀 بدء دورة جديدة")
     
     cookies = load_cookies_for_playwright()
+    if not cookies:
+        log("❌ لا توجد كوكيز")
+        return False
 
+    webview_url = None
+    
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
@@ -213,57 +204,74 @@ def main():
         context.add_cookies(cookies)
         page = context.new_page()
 
-        log(f"📂 فتح المشروع: {PROJECT_URL}")
+        log(f"📂 فتح المشروع")
         page.goto(PROJECT_URL, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(5000)
 
         if "/login" in page.url:
-            log("❌ الكوكيز منتهية - الرجاء تحديث cookies.txt")
+            log("❌ الكوكيز منتهية")
             browser.close()
-            sys.exit(1)
+            return False
 
         log("✅ تم الدخول إلى المشروع")
 
         # تشغيل المشروع
         if press_run_button_with_retry(page, max_attempts=10):
-            log("✅ تم تشغيل المشروع بنجاح!")
+            log("✅ تم تشغيل المشروع")
         else:
-            log("⚠️ فشل تشغيل المشروع - قد يكون شغالاً بالفعل")
+            log("⚠️ فشل تشغيل المشروع")
 
         # البحث عن رابط Webview
-        webview_url = get_webview_url(page)
-        
-        if webview_url:
-            log(f"🌐 رابط Webview: {webview_url}")
-            with open("webview_url.txt", "w") as f:
-                f.write(f"{webview_url}\n")
-                f.write(f"آخر تحديث: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            
-            print("\n" + "="*60)
-            print(f"🌐 رابط Webview: {webview_url}")
-            print("="*60 + "\n")
-        else:
-            log("⚠️ لم يتم العثور على رابط Webview")
+        for attempt in range(5):
+            webview_url = get_webview_url(page)
+            if webview_url:
+                break
+            page.wait_for_timeout(2000)
 
         browser.close()
-
-    # الانتظار 10 ثواني ثم إعادة التشغيل
-    log(f"⏳ الانتظار {REFRESH_INTERVAL_SECONDS} ثانية قبل إعادة التشغيل...")
-    for i in range(REFRESH_INTERVAL_SECONDS, 0, -1):
-        if i % 5 == 0 or i <= 3:
-            log(f"⏳ {i} ثانية متبقية...")
-        time.sleep(1)
     
-    restart_script()
+    # حفظ الرابط
+    if webview_url:
+        log(f"🌐 رابط Webview: {webview_url}")
+        with open("webview_url.txt", "w") as f:
+            f.write(f"{webview_url}\n")
+            f.write(f"التحديث: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        print("\n" + "="*60)
+        print(f"🌐 {webview_url}")
+        print("="*60 + "\n")
+        return True
+    else:
+        log("⚠️ لم يتم العثور على رابط Webview")
+        return False
+
+
+def main():
+    """الحلقة الرئيسية"""
+    log("🔥 بدء التشغيل (إعادة تشغيل كل 10 ثواني)")
+    
+    while True:
+        try:
+            # تشغيل دورة واحدة
+            run_once()
+            
+            # الانتظار 10 ثواني
+            log(f"⏳ الانتظار {REFRESH_INTERVAL_SECONDS} ثواني...")
+            for i in range(REFRESH_INTERVAL_SECONDS, 0, -1):
+                if i % 5 == 0 or i <= 3:
+                    log(f"⏳ {i}s")
+                time.sleep(1)
+            
+            log("🔄 بدء دورة جديدة...")
+            print("-" * 50)
+            
+        except KeyboardInterrupt:
+            log("⏹️ تم الإيقاف")
+            break
+        except Exception as e:
+            log(f"❌ خطأ: {e}")
+            time.sleep(3)
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        log("⏹️ تم الإيقاف يدوياً")
-        sys.exit(0)
-    except Exception as e:
-        log(f"❌ خطأ غير متوقع: {e}")
-        time.sleep(5)
-        restart_script()
+    main()
