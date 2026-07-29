@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-سكربت لتشغيل مشروع Replit وإعادة تشغيل نفسه كل 40 ثانية
+سكربت لتشغيل مشروع Replit وإعادة تشغيل نفسه كل 10 ثواني
 """
 
 import sys
@@ -11,11 +11,13 @@ import os
 import subprocess
 from datetime import datetime
 
+from playwright.sync_api import sync_playwright
+
 COOKIE_FILE = "cookies.txt"
 PROJECT_URL = "https://replit.com/@karimdeka85/v2ray-vless-server-dashboard-5zip"
-REFRESH_INTERVAL_SECONDS = 40  # كل 40 ثانية
+REFRESH_INTERVAL_SECONDS = 10  # كل 10 ثواني
 WEBVIEW_PATTERN = r"https?://[a-f0-9\-]+\.replit\.dev:\d+"
-SCRIPT_NAME = "keep_project_alive_desktop.py"
+SCRIPT_NAME = "keep_project_alive_desktop_work2.py"
 
 
 def log(msg: str):
@@ -43,13 +45,13 @@ def load_cookies_for_playwright():
         jar.load(ignore_discard=True, ignore_expires=True)
     except FileNotFoundError:
         log(f"❌ ملف {COOKIE_FILE} مش موجود")
-        return []
+        sys.exit(1)
     cookies = [netscape_cookie_to_playwright(c) for c in jar]
     log(f"تم تحميل {len(cookies)} كوكي")
     return cookies
 
 
-def press_run_button_with_retry(page, max_attempts=5):
+def press_run_button_with_retry(page, max_attempts=10):
     """محاولات للضغط على زر Run"""
     log("🔍 جاري البحث عن زر Run...")
     
@@ -179,6 +181,8 @@ def get_webview_url(page):
                 return result
         except:
             pass
+        
+        log(f"⚠️ محاولة {attempt + 1}/5 للعثور على رابط Webview")
     
     return None
 
@@ -187,10 +191,9 @@ def restart_script():
     """إعادة تشغيل السكربت نفسه"""
     log("🔄 جاري إعادة تشغيل السكربت...")
     try:
-        # تشغيل السكربت نفسه في عملية جديدة
-        subprocess.Popen(["python", SCRIPT_NAME])
+        subprocess.Popen(["python3", SCRIPT_NAME])
         log("✅ تم إعادة تشغيل السكربت")
-        sys.exit(0)  # إنهاء العملية الحالية
+        sys.exit(0)
     except Exception as e:
         log(f"❌ فشل إعادة التشغيل: {e}")
         sys.exit(1)
@@ -200,9 +203,6 @@ def main():
     log("🚀 بدء تشغيل السكربت")
     
     cookies = load_cookies_for_playwright()
-    if not cookies:
-        log("❌ لا توجد كوكيز صالحة - تأكد من وجود cookies.txt")
-        sys.exit(1)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -225,7 +225,7 @@ def main():
         log("✅ تم الدخول إلى المشروع")
 
         # تشغيل المشروع
-        if press_run_button_with_retry(page, max_attempts=5):
+        if press_run_button_with_retry(page, max_attempts=10):
             log("✅ تم تشغيل المشروع بنجاح!")
         else:
             log("⚠️ فشل تشغيل المشروع - قد يكون شغالاً بالفعل")
@@ -235,32 +235,26 @@ def main():
         
         if webview_url:
             log(f"🌐 رابط Webview: {webview_url}")
-            # حفظ الرابط في ملف للاستخدام الخارجي
             with open("webview_url.txt", "w") as f:
                 f.write(f"{webview_url}\n")
                 f.write(f"آخر تحديث: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            log("💾 تم حفظ الرابط في webview_url.txt")
             
-            # طباعة الرابط بشكل مميز
             print("\n" + "="*60)
             print(f"🌐 رابط Webview: {webview_url}")
             print("="*60 + "\n")
         else:
             log("⚠️ لم يتم العثور على رابط Webview")
 
-        # الانتظار 40 ثانية ثم إعادة التشغيل
-        log(f"⏳ الانتظار {REFRESH_INTERVAL_SECONDS} ثانية قبل إعادة التشغيل...")
-        
-        # عد تنازلي
-        for i in range(REFRESH_INTERVAL_SECONDS, 0, -10):
-            if i % 10 == 0:
-                log(f"⏳ {i} ثانية متبقية...")
-            time.sleep(10)
-
         browser.close()
-        
-        # إعادة تشغيل السكربت
-        restart_script()
+
+    # الانتظار 10 ثواني ثم إعادة التشغيل
+    log(f"⏳ الانتظار {REFRESH_INTERVAL_SECONDS} ثانية قبل إعادة التشغيل...")
+    for i in range(REFRESH_INTERVAL_SECONDS, 0, -1):
+        if i % 5 == 0 or i <= 3:
+            log(f"⏳ {i} ثانية متبقية...")
+        time.sleep(1)
+    
+    restart_script()
 
 
 if __name__ == "__main__":
@@ -271,7 +265,5 @@ if __name__ == "__main__":
         sys.exit(0)
     except Exception as e:
         log(f"❌ خطأ غير متوقع: {e}")
-        # محاولة إعادة التشغيل حتى في حالة الخطأ
-        log("🔄 محاولة إعادة التشغيل بعد الخطأ...")
         time.sleep(5)
         restart_script()
