@@ -23,7 +23,7 @@ REPLIT_PASSWORD = "karimdeka92"
 
 # إعدادات
 PROJECT_URL = "https://replit.com/@karimdeka85/v2ray-vless-server-dashboard-5zip"
-REFRESH_INTERVAL = 1800  # 30 دقيقة (يمكن تقليلها للاختبار)
+REFRESH_INTERVAL = 5  # 30 دقيقة (يمكن تقليلها للاختبار)
 KEEP_ALIVE_PORT = int(os.environ.get('PORT', 8080))
 WEBVIEW_PATTERN = r"https?://[a-f0-9\-]+\.replit\.dev:\d+"
 COOKIE_FILE = "cookies.txt"
