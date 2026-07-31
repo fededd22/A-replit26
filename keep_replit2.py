@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-سكربت Keep Alive مع تسجيل دخول تلقائي إلى Replit
+سكربت Keep Alive مع تسجيل دخول تلقائي - منفذ متغير
 """
 
 import os
@@ -9,6 +9,7 @@ import time
 import json
 import re
 import threading
+import socket
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
@@ -20,7 +21,7 @@ try:
     from selenium.webdriver.common.by import By
     from selenium.webdriver.support.ui import WebDriverWait
     from selenium.webdriver.support import expected_conditions as EC
-    from selenium.common.exceptions import TimeoutException, NoSuchElementException
+    from selenium.common.exceptions import TimeoutException
     SELENIUM_AVAILABLE = True
 except ImportError:
     SELENIUM_AVAILABLE = False
@@ -33,20 +34,41 @@ REPLIT_PASSWORD = "karimdeka92"
 
 # إعدادات
 PROJECT_URL = "https://replit.com/@karimdeka85/v2ray-vless-server-dashboard-5zip"
-REFRESH_INTERVAL = 10  # 30 دقيقة
-KEEP_ALIVE_PORT = int(os.environ.get('PORT', 8080))
+REFRESH_INTERVAL = 10  # 5 دقائق
+KEEP_ALIVE_PORT = 8081  # تغيير المنفذ إلى 8081
 WEBVIEW_PATTERN = r"https?://[a-f0-9\-]+\.replit\.dev:\d+"
 COOKIE_FILE = "cookies.txt"
 
-# مسارات Termux
-CHROMEDRIVER_PATH = "/data/data/com.termux/files/usr/bin/chromedriver"
-CHROMIUM_PATH = "/data/data/com.termux/files/usr/bin/chromium"
+# مسارات Termux - التحقق من المسارات المختلفة
+CHROMEDRIVER_PATHS = [
+    "/data/data/com.termux/files/usr/bin/chromedriver",
+    "/data/data/com.termux/files/usr/lib/chromium/chromedriver",
+    "/data/data/com.termux/files/usr/bin/chromedriver.exe"
+]
+
+CHROMIUM_PATHS = [
+    "/data/data/com.termux/files/usr/bin/chromium",
+    "/data/data/com.termux/files/usr/lib/chromium/chromium"
+]
 
 # متغيرات عامة
 last_webview_url = None
 last_update_time = None
 last_login_time = None
 running = True
+
+# العثور على المسار الصحيح
+CHROMEDRIVER_PATH = None
+for path in CHROMEDRIVER_PATHS:
+    if os.path.exists(path):
+        CHROMEDRIVER_PATH = path
+        break
+
+CHROMIUM_PATH = None
+for path in CHROMIUM_PATHS:
+    if os.path.exists(path):
+        CHROMIUM_PATH = path
+        break
 
 
 class KeepAliveHandler(BaseHTTPRequestHandler):
@@ -72,56 +94,38 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                 <title>Replit Keep Alive</title>
                 <style>
                     body {{ 
-                        font-family: 'Segoe UI', Arial, sans-serif;
+                        font-family: Arial, sans-serif;
                         text-align: center; 
                         padding: 20px; 
-                        background: linear-gradient(135deg, #0a0a0a, #1a1a2e);
+                        background: #0a0a0a;
                         color: #00ff88;
-                        margin: 0;
-                        min-height: 100vh;
-                        display: flex;
-                        justify-content: center;
-                        align-items: center;
                     }}
                     .container {{ 
-                        background: rgba(0,0,0,0.8); 
+                        background: #1a1a2e; 
                         padding: 30px; 
                         border-radius: 20px; 
                         max-width: 650px; 
-                        width: 90%;
+                        margin: auto;
                         border: 1px solid #00ff88;
-                        box-shadow: 0 0 40px rgba(0,255,136,0.1);
                     }}
-                    h1 {{ 
-                        font-size: 2.5em; 
-                        margin: 0 0 10px 0;
-                        background: linear-gradient(45deg, #00ff88, #00ccff);
-                        -webkit-background-clip: text;
-                        -webkit-text-fill-color: transparent;
-                    }}
-                    .status {{ font-size: 1.8em; color: {status_color}; margin: 15px 0; }}
+                    h1 {{ color: #00ff88; }}
+                    .status {{ font-size: 1.8em; color: {status_color}; }}
                     .url {{ 
                         color: #00ccff; 
                         word-break: break-all;
-                        background: rgba(0,0,0,0.5);
+                        background: #0a0a0a;
                         padding: 15px;
                         border-radius: 10px;
                         margin: 15px 0;
-                        font-size: 0.9em;
-                        border: 1px solid rgba(0,204,255,0.2);
                     }}
-                    .info {{ color: #888; font-size: 0.85em; margin: 10px 0; }}
+                    .info {{ color: #888; font-size: 0.9em; }}
                     .badge {{
                         display: inline-block;
-                        padding: 4px 12px;
+                        padding: 5px 12px;
                         background: rgba(0,255,136,0.1);
                         border-radius: 20px;
-                        margin: 4px;
-                        font-size: 0.75em;
-                        border: 1px solid rgba(0,255,136,0.2);
+                        margin: 5px;
                     }}
-                    .footer {{ margin-top: 20px; font-size: 0.75em; color: #666; }}
-                    a {{ color: #00ccff; text-decoration: none; }}
                 </style>
             </head>
             <body>
@@ -131,13 +135,10 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                     <div class="url">🌐 {last_webview_url or '⏳ جاري الانتظار...'}</div>
                     <div class="info">⏱️ آخر تحديث: {last_update_time or 'لم يتم التحديث'}</div>
                     <div class="info">🔑 آخر تسجيل دخول: {last_login_time or 'لم يتم تسجيل الدخول'}</div>
-                    <div style="margin-top: 15px;">
+                    <div>
                         <span class="badge">🔄 كل {REFRESH_INTERVAL} ثانية</span>
                         <span class="badge">📱 Termux</span>
                         <span class="badge">🔑 Auto Login</span>
-                    </div>
-                    <div class="footer">
-                        <a href="/status">📊 JSON Status</a>
                     </div>
                 </div>
             </body>
@@ -173,8 +174,20 @@ def log(msg):
     print(f"[{ts}] {msg}", flush=True)
 
 
+def find_free_port():
+    """البحث عن منفذ حر"""
+    for port in range(8080, 8100):
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.bind(('0.0.0.0', port))
+            sock.close()
+            return port
+        except:
+            continue
+    return 8080
+
+
 def save_cookies(cookies):
-    """حفظ الكوكيز في ملف"""
     try:
         with open(COOKIE_FILE, 'w') as f:
             json.dump(cookies, f, indent=2)
@@ -186,7 +199,7 @@ def save_cookies(cookies):
 
 
 def login_to_replit():
-    """تسجيل الدخول إلى Replit والحصول على الكوكيز"""
+    """تسجيل الدخول إلى Replit"""
     global last_login_time
     
     log("🔑 بدء تسجيل الدخول إلى Replit...")
@@ -195,13 +208,13 @@ def login_to_replit():
         log("❌ Selenium غير متوفر")
         return None
     
-    if not os.path.exists(CHROMEDRIVER_PATH):
-        log(f"❌ ChromeDriver غير موجود في: {CHROMEDRIVER_PATH}")
+    if not CHROMEDRIVER_PATH:
+        log(f"❌ ChromeDriver غير موجود")
+        log("📌 قم بتشغيل: pkg install chromedriver")
         return None
     
     driver = None
     try:
-        # إعداد المتصفح
         options = Options()
         options.add_argument('--headless')
         options.add_argument('--no-sandbox')
@@ -211,14 +224,13 @@ def login_to_replit():
         options.add_argument('--disable-blink-features=AutomationControlled')
         options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
         
-        if os.path.exists(CHROMIUM_PATH):
+        if CHROMIUM_PATH:
             options.binary_location = CHROMIUM_PATH
         
         service = Service(executable_path=CHROMEDRIVER_PATH)
         driver = webdriver.Chrome(service=service, options=options)
         driver.set_page_load_timeout(45)
         
-        # فتح صفحة تسجيل الدخول
         log("🌐 فتح صفحة تسجيل الدخول...")
         driver.get("https://replit.com/login")
         time.sleep(3)
@@ -227,23 +239,23 @@ def login_to_replit():
         log("📧 إدخال البريد الإلكتروني...")
         try:
             email_input = WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='email'], input[name='email'], input[placeholder*='Email']"))
+                EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='email']"))
             )
             email_input.clear()
             email_input.send_keys(REPLIT_EMAIL)
             time.sleep(1)
-        except Exception as e:
-            log(f"⚠️ خطأ في إدخال البريد: {e}")
+        except:
+            log("⚠️ لم يتم العثور على حقل البريد الإلكتروني")
         
         # إدخال كلمة المرور
         log("🔒 إدخال كلمة المرور...")
         try:
-            password_input = driver.find_element(By.CSS_SELECTOR, "input[type='password'], input[name='password']")
+            password_input = driver.find_element(By.CSS_SELECTOR, "input[type='password']")
             password_input.clear()
             password_input.send_keys(REPLIT_PASSWORD)
             time.sleep(1)
-        except Exception as e:
-            log(f"⚠️ خطأ في إدخال كلمة المرور: {e}")
+        except:
+            log("⚠️ لم يتم العثور على حقل كلمة المرور")
         
         # الضغط على زر تسجيل الدخول
         log("🖱️ الضغط على زر تسجيل الدخول...")
@@ -251,63 +263,39 @@ def login_to_replit():
             login_button = driver.find_element(By.XPATH, "//button[contains(text(), 'Log in') or contains(text(), 'Sign in')]")
             login_button.click()
             time.sleep(5)
-        except Exception as e:
-            log(f"⚠️ خطأ في الضغط على زر تسجيل الدخول: {e}")
-        
-        # انتظار تحميل الصفحة
-        time.sleep(5)
+        except:
+            log("⚠️ لم يتم العثور على زر تسجيل الدخول")
         
         # التحقق من نجاح تسجيل الدخول
+        time.sleep(3)
         current_url = driver.current_url
+        
         if "/login" in current_url:
-            # قد يكون هناك نموذج إضافي
-            try:
-                # البحث عن زر Continue
-                continue_btn = driver.find_element(By.XPATH, "//button[contains(text(), 'Continue')]")
-                continue_btn.click()
-                time.sleep(3)
-            except:
-                pass
-            
-            # التحقق مرة أخرى
-            current_url = driver.current_url
-            if "/login" in current_url:
-                log("❌ فشل تسجيل الدخول")
-                driver.quit()
-                return None
+            log("❌ فشل تسجيل الدخول - تحقق من البريد وكلمة المرور")
+            driver.quit()
+            return None
         
         log("✅ تم تسجيل الدخول بنجاح!")
         
         # الحصول على الكوكيز
         cookies = driver.get_cookies()
         
-        # تنظيف الكوكيز (إزالة الكوكيز غير الضرورية)
+        # تصفية الكوكيز المهمة
         important_cookies = []
         important_names = ['connect.sid', 'replit_session', 'user', 'csrftoken']
         
         for cookie in cookies:
             if cookie['name'] in important_names:
                 important_cookies.append(cookie)
-            elif 'replit' in cookie['domain']:
-                important_cookies.append(cookie)
         
         if not important_cookies:
-            # إذا لم يتم العثور على كوكيز مهمة، خذ كل الكوكيز
             important_cookies = cookies
         
         driver.quit()
-        
-        # تحديث وقت آخر تسجيل دخول
         last_login_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         log(f"✅ تم الحصول على {len(important_cookies)} كوكي")
         return important_cookies
-    
-    except TimeoutException:
-        log("⏰ انتهى وقت التحميل")
-        if driver:
-            driver.quit()
-        return None
     
     except Exception as e:
         log(f"❌ خطأ في تسجيل الدخول: {e}")
@@ -323,7 +311,6 @@ def get_webview_url():
     """الحصول على رابط Webview"""
     global last_webview_url, last_update_time
     
-    # تحميل الكوكيز من الملف
     cookies = None
     if os.path.exists(COOKIE_FILE):
         try:
@@ -333,7 +320,6 @@ def get_webview_url():
         except:
             pass
     
-    # إذا لم توجد كوكيز، قم بتسجيل الدخول
     if not cookies:
         log("🔑 لا توجد كوكيز - جاري تسجيل الدخول...")
         cookies = login_to_replit()
@@ -343,14 +329,12 @@ def get_webview_url():
             log("❌ فشل تسجيل الدخول")
             return None
     
-    # البحث عن الرابط
-    if not os.path.exists(CHROMEDRIVER_PATH):
+    if not CHROMEDRIVER_PATH:
         log(f"❌ ChromeDriver غير موجود")
         return None
     
     driver = None
     try:
-        # إعداد المتصفح
         options = Options()
         options.add_argument('--headless')
         options.add_argument('--no-sandbox')
@@ -359,14 +343,13 @@ def get_webview_url():
         options.add_argument('--window-size=1280,720')
         options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
         
-        if os.path.exists(CHROMIUM_PATH):
+        if CHROMIUM_PATH:
             options.binary_location = CHROMIUM_PATH
         
         service = Service(executable_path=CHROMEDRIVER_PATH)
         driver = webdriver.Chrome(service=service, options=options)
         driver.set_page_load_timeout(45)
         
-        # إضافة الكوكيز
         driver.get("https://replit.com")
         time.sleep(2)
         
@@ -377,38 +360,33 @@ def get_webview_url():
                 if 'path' not in cookie:
                     cookie['path'] = '/'
                 driver.add_cookie(cookie)
-            except Exception as e:
+            except:
                 pass
         
         log(f"📂 فتح المشروع...")
         driver.get(PROJECT_URL)
         time.sleep(5)
         
-        # التحقق من الدخول
         if "login" in driver.current_url.lower():
             log("⚠️ الكوكيز منتهية - جاري تسجيل الدخول مجدداً...")
             driver.quit()
             
-            # تسجيل الدخول مجدداً
             new_cookies = login_to_replit()
             if new_cookies:
                 save_cookies(new_cookies)
-                # محاولة مرة أخرى
                 return get_webview_url()
             return None
         
         log("✅ تم الدخول إلى المشروع")
         
-        # البحث عن زر Run
         try:
             run_btn = driver.find_element(By.XPATH, "//button[contains(text(), 'Run')]")
             run_btn.click()
             log("✅ تم الضغط على Run")
             time.sleep(5)
         except:
-            log("⚠️ زر Run غير موجود أو المشروع يعمل بالفعل")
+            pass
         
-        # البحث عن Webview URL
         webview_url = None
         
         # البحث في iframes
@@ -420,7 +398,6 @@ def get_webview_url():
                 webview_url = match.group(0)
                 break
         
-        # البحث في النص
         if not webview_url:
             page_source = driver.page_source
             matches = re.findall(WEBVIEW_PATTERN, page_source)
@@ -434,7 +411,6 @@ def get_webview_url():
             last_update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             log(f"✅ الرابط: {webview_url}")
             
-            # حفظ الرابط
             with open("webview_url.txt", "w") as f:
                 f.write(f"{webview_url}\n")
                 f.write(f"آخر تحديث: {last_update_time}\n")
@@ -456,9 +432,15 @@ def get_webview_url():
 
 def run_server():
     """تشغيل خادم HTTP"""
+    global KEEP_ALIVE_PORT
+    
+    # البحث عن منفذ حر
+    KEEP_ALIVE_PORT = find_free_port()
+    
     try:
         server = HTTPServer(('0.0.0.0', KEEP_ALIVE_PORT), KeepAliveHandler)
         log(f"🌐 خادم HTTP يعمل على http://localhost:{KEEP_ALIVE_PORT}")
+        log(f"📱 افتح في المتصفح: http://localhost:{KEEP_ALIVE_PORT}")
         server.serve_forever()
     except Exception as e:
         log(f"❌ خطأ في الخادم: {e}")
@@ -473,7 +455,17 @@ def main():
     
     if not SELENIUM_AVAILABLE:
         log("❌ Selenium غير مثبت!")
+        log("📌 قم بتشغيل: pip install selenium")
         return
+    
+    if not CHROMEDRIVER_PATH:
+        log(f"❌ ChromeDriver غير موجود!")
+        log("📌 قم بتشغيل: pkg install chromedriver")
+        return
+    
+    log(f"✅ ChromeDriver موجود في: {CHROMEDRIVER_PATH}")
+    if CHROMIUM_PATH:
+        log(f"✅ Chromium موجود في: {CHROMIUM_PATH}")
     
     # تشغيل الخادم
     server_thread = threading.Thread(target=run_server, daemon=True)
