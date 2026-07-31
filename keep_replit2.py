@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 سكربت Keep Alive مع Playwright - يعمل في Cloud Shell
+مع تصحيح مشكلة الكوكيز
 """
 
 import os
@@ -23,7 +24,7 @@ REPLIT_PASSWORD = "karimdeka92"
 
 # إعدادات
 PROJECT_URL = "https://replit.com/@karimdeka85/v2ray-vless-server-dashboard-5zip"
-REFRESH_INTERVAL = 5  # 30 دقيقة (يمكن تقليلها للاختبار)
+REFRESH_INTERVAL = 300  # 5 دقائق للاختبار
 KEEP_ALIVE_PORT = int(os.environ.get('PORT', 8080))
 WEBVIEW_PATTERN = r"https?://[a-f0-9\-]+\.replit\.dev:\d+"
 COOKIE_FILE = "cookies.txt"
@@ -140,7 +141,6 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                     </div>
                     <div class="footer">
                         <p>📊 <a href="/status">حالة JSON</a></p>
-                        <p style="margin-top: 10px; color: #333;">💡 افتح الرابط أعلاه في متصفح جديد</p>
                     </div>
                 </div>
             </body>
@@ -178,12 +178,60 @@ def log(msg):
     print(f"[{ts}] {msg}", flush=True)
 
 
+def clean_cookie(cookie):
+    """تنظيف الكوكي وإزالة الحقول غير الصالحة لـ Playwright"""
+    # الحقول المسموح بها في Playwright
+    allowed_fields = ['name', 'value', 'domain', 'path', 'expires', 'httpOnly', 'secure', 'sameSite']
+    
+    cleaned = {}
+    for field in allowed_fields:
+        if field in cookie:
+            # تحويل القيم إلى الأنواع الصحيحة
+            if field == 'expires':
+                # تحويل التاريخ إلى رقم (timestamp)
+                if isinstance(cookie[field], (int, float)):
+                    cleaned[field] = cookie[field]
+                elif isinstance(cookie[field], str):
+                    try:
+                        # محاولة تحويل النص إلى timestamp
+                        dt = datetime.fromisoformat(cookie[field].replace('Z', '+00:00'))
+                        cleaned[field] = int(dt.timestamp())
+                    except:
+                        pass
+            elif field == 'httpOnly':
+                cleaned[field] = bool(cookie[field])
+            elif field == 'secure':
+                cleaned[field] = bool(cookie[field])
+            elif field == 'sameSite':
+                if cookie[field] in ['Strict', 'Lax', 'None']:
+                    cleaned[field] = cookie[field]
+            else:
+                cleaned[field] = str(cookie[field])
+    
+    # التأكد من وجود الحقول الأساسية
+    if 'name' not in cleaned or 'value' not in cleaned:
+        return None
+    
+    # تنظيف القيم
+    if 'domain' in cleaned:
+        cleaned['domain'] = cleaned['domain'].lstrip('.')
+    
+    return cleaned
+
+
 def save_cookies(cookies):
-    """حفظ الكوكيز في ملف"""
+    """حفظ الكوكيز بعد تنظيفها"""
     try:
+        # تنظيف الكوكيز قبل الحفظ
+        cleaned_cookies = []
+        for cookie in cookies:
+            cleaned = clean_cookie(cookie)
+            if cleaned:
+                cleaned_cookies.append(cleaned)
+        
         with open(COOKIE_FILE, 'w') as f:
-            json.dump(cookies, f, indent=2)
-        log(f"✅ تم حفظ {len(cookies)} كوكي")
+            json.dump(cleaned_cookies, f, indent=2)
+        log(f"✅ تم حفظ {len(cleaned_cookies)} كوكي")
         return True
     except Exception as e:
         log(f"❌ خطأ في حفظ الكوكيز: {e}")
@@ -225,9 +273,14 @@ def login_to_replit():
             # إدخال البريد الإلكتروني
             log("📧 إدخال البريد الإلكتروني...")
             try:
-                # انتظار ظهور حقل البريد الإلكتروني
-                page.wait_for_selector("input[type='email']", timeout=10000)
-                page.fill("input[type='email']", REPLIT_EMAIL)
+                # استخدام JavaScript لإدخال البريد
+                page.evaluate(f"""
+                    const emailInput = document.querySelector('input[type="email"]');
+                    if (emailInput) {{
+                        emailInput.value = '{REPLIT_EMAIL}';
+                        emailInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    }}
+                """)
                 page.wait_for_timeout(1000)
             except Exception as e:
                 log(f"⚠️ خطأ في إدخال البريد: {e}")
@@ -235,7 +288,13 @@ def login_to_replit():
             # إدخال كلمة المرور
             log("🔒 إدخال كلمة المرور...")
             try:
-                page.fill("input[type='password']", REPLIT_PASSWORD)
+                page.evaluate(f"""
+                    const passInput = document.querySelector('input[type="password"]');
+                    if (passInput) {{
+                        passInput.value = '{REPLIT_PASSWORD}';
+                        passInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    }}
+                """)
                 page.wait_for_timeout(1000)
             except Exception as e:
                 log(f"⚠️ خطأ في إدخال كلمة المرور: {e}")
@@ -243,7 +302,6 @@ def login_to_replit():
             # الضغط على زر تسجيل الدخول
             log("🖱️ الضغط على زر تسجيل الدخول...")
             try:
-                # محاولة الضغط على زر تسجيل الدخول بطرق مختلفة
                 login_selectors = [
                     "button:has-text('Log in')",
                     "button:has-text('Sign in')",
@@ -256,11 +314,10 @@ def login_to_replit():
                         if page.locator(selector).count() > 0:
                             page.locator(selector).first.click()
                             log(f"✅ تم الضغط على الزر: {selector}")
+                            page.wait_for_timeout(5000)
                             break
                     except:
                         continue
-                
-                page.wait_for_timeout(5000)
             except Exception as e:
                 log(f"⚠️ خطأ في الضغط على زر تسجيل الدخول: {e}")
             
@@ -278,37 +335,18 @@ def login_to_replit():
             # الحصول على الكوكيز
             cookies = context.cookies()
             
-            # تصفية الكوكيز المهمة
-            important_cookies = []
-            important_names = ['connect.sid', 'replit_session', 'user', 'csrftoken']
-            
+            # تنظيف الكوكيز
+            cleaned_cookies = []
             for cookie in cookies:
-                if cookie['name'] in important_names:
-                    # إزالة الحقول غير الضرورية
-                    clean_cookie = {
-                        "name": cookie['name'],
-                        "value": cookie['value'],
-                        "domain": cookie.get('domain', '.replit.com'),
-                        "path": cookie.get('path', '/')
-                    }
-                    important_cookies.append(clean_cookie)
-            
-            if not important_cookies:
-                # إذا لم يتم العثور على كوكيز مهمة، خذ كل الكوكيز
-                for cookie in cookies:
-                    clean_cookie = {
-                        "name": cookie['name'],
-                        "value": cookie['value'],
-                        "domain": cookie.get('domain', '.replit.com'),
-                        "path": cookie.get('path', '/')
-                    }
-                    important_cookies.append(clean_cookie)
+                cleaned = clean_cookie(cookie)
+                if cleaned:
+                    cleaned_cookies.append(cleaned)
             
             browser.close()
             
             last_login_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            log(f"✅ تم الحصول على {len(important_cookies)} كوكي")
-            return important_cookies
+            log(f"✅ تم الحصول على {len(cleaned_cookies)} كوكي")
+            return cleaned_cookies
     
     except Exception as e:
         log(f"❌ خطأ في تسجيل الدخول: {e}")
@@ -358,8 +396,26 @@ def get_webview_url():
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
             
-            # إضافة الكوكيز
-            context.add_cookies(cookies)
+            # إضافة الكوكيز واحدة تلو الأخرى مع تجاهل الكوكيز الفاسدة
+            valid_cookies = []
+            for cookie in cookies:
+                try:
+                    context.add_cookies([cookie])
+                    valid_cookies.append(cookie)
+                except Exception as e:
+                    log(f"⚠️ تجاهل كوكي غير صالح: {cookie.get('name', 'unknown')}")
+                    continue
+            
+            if not valid_cookies:
+                log("❌ لا توجد كوكيز صالحة - جاري تسجيل الدخول مجدداً...")
+                browser.close()
+                new_cookies = login_to_replit()
+                if new_cookies:
+                    save_cookies(new_cookies)
+                    return get_webview_url()
+                return None
+            
+            log(f"✅ تم إضافة {len(valid_cookies)} كوكي صالح")
             
             page = context.new_page()
             
