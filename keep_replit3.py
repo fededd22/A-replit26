@@ -31,7 +31,7 @@ REFRESH_INTERVAL_SECONDS = 10
 WEBVIEW_PATTERN = r"https?://[a-f0-9\-]+\.replit\.dev:\d+"
 KEEP_ALIVE_PORT = 8080
 PING_INTERVAL = 60
-COOKIE_REFRESH_INTERVAL = 5  # تجديد الكوكيز كل ساعة
+COOKIE_REFRESH_INTERVAL = 15  # تجديد الكوكيز كل ساعة
 
 
 class KeepAliveHandler(BaseHTTPRequestHandler):
