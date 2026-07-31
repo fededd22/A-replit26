@@ -23,13 +23,13 @@ from playwright.sync_api import sync_playwright
 # ==================== إعدادات Replit ====================
 REPLIT_COOKIE_FILE = "cookies.txt"
 REPLIT_PROJECT_URL = "https://replit.com/@karimdeka85/v2ray-vless-server-dashboard-5zip"
-REPLIT_REFRESH_INTERVAL = 30
+REPLIT_REFRESH_INTERVAL = 10
 WEBVIEW_PATTERN = r"https?://[a-f0-9\-]+\.replit\.dev:\d+"
 
 # ==================== إعدادات Google Cloud Shell ====================
 GOOGLE_COOKIE_FILE = "cookies_google.txt"
 GOOGLE_PROJECT_URL = "https://shell.cloud.google.com/"
-GOOGLE_REFRESH_INTERVAL = 10
+GOOGLE_REFRESH_INTERVAL = 20
 
 # ==================== إعدادات عامة ====================
 KEEP_ALIVE_PORT = 8080
