@@ -15,6 +15,12 @@ playwright install chromium
 ## 3. التشغيل
 ```bash
 python keep_project_alive_desktop.py
+
+python keep_deepnote_shell_alive.py
+
+python keep_replit3.py
+
+python keep_alive.py
 ```
 
 هيحصل الآتي:
