@@ -1,0 +1,26 @@
+# Netscape HTTP Cookie File
+# https://curl.haxx.se/rfc/cookie_spec.html
+# This is a generated file! Do not edit.
+
+deepnote.com	FALSE	/	FALSE	1817082130	DNID	aa1796ca-abab-4d32-b43d-c6565b44f2f3
+deepnote.com	FALSE	/	FALSE	1817082379	theme	light
+.deepnote.com	TRUE	/	FALSE	1808876152	intercom-id-ijd0po3e	0b4690a3-5980-4d45-965d-f41d2141721f
+.deepnote.com	TRUE	/	FALSE	1808876388	intercom-device-id-ijd0po3e	e5815e86-3f83-4435-b004-774626648620
+deepnote.com	FALSE	/	FALSE	1788138299	connect.sid	s%3AyN_HKSuHfoZtGdNVxCMuljM-2Q9PLa7n.yd1MtD98NxbaAGMa7e%2BTEQ85DOWmooKXy2wR0Ij3VMQ
+.deepnote.com	TRUE	/	TRUE	1819242374	_twpid	tw.1785546305655.2546313406617066
+.deepnote.com	TRUE	/	FALSE	1820106379	_ga	GA1.1.1034511752.1785546308
+.deepnote.com	TRUE	/	TRUE	1788138309	_reb2bref	https://accounts.google.com/
+.deepnote.com	TRUE	/	TRUE	1816650309	_reb2buid	7a802081-dd50-484d-99d9-7352a4bc68c0
+.deepnote.com	TRUE	/	TRUE	1785548109	_reb2bsessionID	m9jRoZsaaeMGMg3Ybv1fFryw
+.deepnote.com	TRUE	/	FALSE	1793322477	_fbp	fb.1.1785546309735.911785544441839725
+.deepnote.com	TRUE	/	TRUE	1820106478	FPID	FPID2.2.z5dY4nDwl2S3B6uIugFSK8lt5Es%2BEVpwDK%2BYAZ%2FA8qw%3D.1785546308
+.deepnote.com	TRUE	/	TRUE	1785618310	FPLC	AW1HQ2114PPbE5bqk2mdwVnSuVIi5PQZxFRVck6dnopWgeP%2BpRjijVqpwzpe6bGx01TAWCxDXqd6aV0pFfpZDlYSsq73qE7S1pcgEHUVomQkHgvTPYjvHR4AXFHB5g%3D%3D
+.deepnote.com	TRUE	/	TRUE	1793322303	FPAU	1.1.1411729223.1785546304
+.deepnote.com	TRUE	/	TRUE	1787274311	_reb2bgeo	%7B%22city%22%3A%22London%22%2C%22country%22%3A%22United%20Kingdom%22%2C%22countryCode%22%3A%22GB%22%2C%22hosting%22%3Atrue%2C%22isp%22%3A%22Google%20LLC%22%2C%22lat%22%3A51.5123%2C%22proxy%22%3Afalse%2C%22region%22%3A%22ENG%22%2C%22regionName%22%3A%22England%22%2C%22status%22%3A%22success%22%2C%22timezone%22%3A%22Europe%2FLondon%22%2C%22zip%22%3A%22%22%7D
+.deepnote.com	TRUE	/	TRUE	1793322380	_rdt_uuid	1785546308359.a388d7db-af50-4319-a12f-bed4de52cceb
+.deepnote.com	TRUE	/	FALSE	1786151188	intercom-session-ijd0po3e	VCtYUHU0emRreEs5dFRYQ2xtbnFyL0FrS2FXSVlhVlhodjhHR1BaV00vcFMzK1RaYlNkUlB0WlN1SmQ1emhSeDVPbEkwSFpWZjBrZXBFN2NTaHB2c0ptNDV2TjV3dS8xNC9DL3Z6TjF5T1pDbnBQQzM0QjZPazJLUjJxODdJNEdRamZyZTlvaTF6UXlRK3dMSDFtbWJoRURGeWY0WEtvOG5rL3kyV3MzOG1KL3g2akl2Z2tJY3dKL28wZ2FRU3pkQWJVc2pJbGYyVlNKeFVMQmJWR3lKdz09LS1WcUVPMHFoZDZRZEdNT2F5cFlPTFBBPT0=--9cbf1807208e88082aa62d41619fb8dd619d08a1
+.deepnote.com	TRUE	/	FALSE	1793322304	_gcl_au	1.1.1411729223.1785546304.-.-.1785546315.1558466961.1785546316.1785546413
+.deepnote.com	TRUE	/	FALSE	1785632813	_uetsid	098ef9408d4511f1a83db3f10cbcfea8
+.deepnote.com	TRUE	/	FALSE	1819242413	_uetvid	098f43d08d4511f19eccb5947eb6710e
+.deepnote.com	TRUE	/	FALSE	1820106478	_ga_1234	GS2.1.s1785546308$o1$g1$t1785546477$j48$l0$h1158725092
+.deepnote.com	TRUE	/	TRUE	1817082495	ph_phc_PTbSfMizYPEr4pc2K2caKmGik9er4MiTUjogNvA86vV_posthog	%7B%22%24device_id%22%3A%22019fbadb-9224-79c9-8a0b-83a272e1bd3a%22%2C%22distinct_id%22%3A%226232c34e-073b-4668-95b0-098cd74c8251%22%2C%22%24sesid%22%3A%5B1785546495881%2C%22019fbadb-9239-7aec-a102-d630c283d533%22%2C1785546379828%5D%2C%22%24epp%22%3Atrue%2C%22%24initial_person_info%22%3A%7B%22r%22%3A%22https%3A%2F%2Fdeepnote.com%2Fonboarding%22%2C%22u%22%3A%22https%3A%2F%2Fdeepnote.com%2Fworkspace%2Fmolitiiy-19213b31-958f-4741-bf2b-e1ad5a5efec0%2Fhome%3Fis-team-trial%3Dtrue%22%7D%2C%22%24user_state%22%3A%22identified%22%7D
