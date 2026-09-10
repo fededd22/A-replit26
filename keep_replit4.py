@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 """
-سكربت مدمج محسّن - Replit + Google Cloud Shell مع Keep Alive
-تسجيل دخول تلقائي متعدد المراحل (Cookies → Email/Password → OAuth)
+سكربت Replit محسّن - يحاكي متصفحاً حقيقياً ويدخل للحساب بشكل طبيعي
 """
 
-import sys
-import time
-import http.cookiejar
-import re
 import os
+import sys
 import json
+import time
+import re
 import signal
 import threading
 from datetime import datetime
@@ -20,29 +18,20 @@ from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 # ==================== الإعدادات ====================
 REPLIT_COOKIE_FILE = "cookies.txt"
-REPLIT_PROJECT_URL = "https://replit.com/@karimdeka85/v2ray-vless-server-dashboard-5zip"
+REPLIT_USERNAME = "karimdeka85"
+REPLIT_REPL_SLUG = "v2ray-vless-server-dashboard-5zip"
+REPLIT_PROJECT_URL = f"https://replit.com/@{REPLIT_USERNAME}/{REPLIT_REPL_SLUG}"
 REPLIT_LOGIN_URL = "https://replit.com/login"
 REPLIT_REFRESH_INTERVAL = 30
 WEBVIEW_PATTERN = r"https?://[a-f0-9\-]+\.replit\.dev(?::\d+)?"
 
-GOOGLE_COOKIE_FILE = "cookies_google.txt"
-GOOGLE_PROJECT_URL = "https://shell.cloud.google.com/"
-GOOGLE_REFRESH_INTERVAL = 20
-
-KEEP_ALIVE_PORT = 8080
-
-# بيانات الدخول
 REPLIT_EMAIL = "karimdeka85@gmail.com"
 REPLIT_PASSWORD = "karimdeka92"
 
-# متغيرات عامة
+KEEP_ALIVE_PORT = 8080
+running = True
 last_webview_url = None
 last_update_time = None
-last_google_status = None
-last_google_update = None
-last_login_attempt = 0
-LOGIN_COOLDOWN = 60  # ثانية بين محاولات تسجيل الدخول
-running = True
 
 
 def log(msg: str):
@@ -50,440 +39,510 @@ def log(msg: str):
     print(f"[{ts}] {msg}", flush=True)
 
 
-# ==================== إدارة الكوكيز ====================
+# ==================== تحميل/حفظ الكوكيز ====================
 
-def clean_cookie(cookie) -> dict:
-    """تنظيف الكوكي لصيغة Playwright الصحيحة"""
-    if not isinstance(cookie, dict):
-        return None
-    
-    allowed = ['name', 'value', 'domain', 'path', 'expires', 'httpOnly', 'secure', 'sameSite']
-    cleaned = {}
-    
-    for field in allowed:
-        if field in cookie and cookie[field] is not None:
-            if field == 'expires':
-                if isinstance(cookie[field], (int, float)):
-                    cleaned[field] = int(cookie[field])
-                elif isinstance(cookie[field], str):
-                    try:
-                        dt = datetime.fromisoformat(cookie[field].replace('Z', '+00:00'))
-                        cleaned[field] = int(dt.timestamp())
-                    except:
-                        continue
-            elif field in ('httpOnly', 'secure'):
-                cleaned[field] = bool(cookie[field])
-            elif field == 'sameSite':
-                if cookie[field] in ('Strict', 'Lax', 'None'):
-                    cleaned[field] = cookie[field]
-            else:
-                cleaned[field] = str(cookie[field])
-    
-    if 'name' not in cleaned or 'value' not in cleaned:
-        return None
-    if 'domain' not in cleaned:
-        return None
-    
-    cleaned['domain'] = cleaned['domain'].lstrip('.')
-    cleaned['path'] = cleaned.get('path', '/')
-    return cleaned
-
-
-def load_cookies_any_format(cookie_file):
-    """تحميل الكوكيز من أي صيغة (Netscape أو JSON)"""
+def load_cookies(cookie_file):
+    """تحميل كوكيز بصيغة JSON أو Netscape مع تصفية كوكيز Replit فقط"""
     if not os.path.exists(cookie_file):
         return []
     
-    # محاولة JSON أولاً
+    cookies = []
+    
+    # JSON
     try:
-        with open(cookie_file, 'r') as f:
+        with open(cookie_file) as f:
             content = f.read().strip()
-        
-        if content.startswith('[') or content.startswith('{'):
+        if content.startswith(('[', '{')):
             data = json.loads(content)
             if isinstance(data, dict) and 'cookies' in data:
                 data = data['cookies']
-            
-            cleaned = []
-            for c in data:
-                cc = clean_cookie(c)
-                if cc:
-                    cleaned.append(cc)
-            
-            if cleaned:
-                log(f"✅ تم تحميل {len(cleaned)} كوكي (JSON) من {cookie_file}")
-                return cleaned
-    except Exception as e:
+            cookies = data
+    except:
         pass
     
-    # محاولة Netscape
-    try:
-        jar = http.cookiejar.MozillaCookieJar(cookie_file)
-        jar.load(ignore_discard=True, ignore_expires=True)
-        
-        cleaned = []
-        for c in jar:
-            cc = clean_cookie({
-                'name': c.name,
-                'value': c.value,
-                'domain': c.domain,
-                'path': c.path or '/',
-                'secure': bool(c.secure),
-                'httpOnly': bool(c._rest.get('HttpOnly', False)) if hasattr(c, '_rest') else False,
-                'expires': c.expires,
-            })
-            if cc:
-                cleaned.append(cc)
-        
-        if cleaned:
-            log(f"✅ تم تحميل {len(cleaned)} كوكي (Netscape) من {cookie_file}")
-            return cleaned
-    except Exception as e:
-        log(f"⚠️ فشل تحميل Netscape: {e}")
+    # Netscape
+    if not cookies:
+        import http.cookiejar
+        try:
+            jar = http.cookiejar.MozillaCookieJar(cookie_file)
+            jar.load(ignore_discard=True, ignore_expires=True)
+            for c in jar:
+                cookies.append({
+                    'name': c.name,
+                    'value': c.value,
+                    'domain': c.domain,
+                    'path': c.path or '/',
+                    'secure': bool(c.secure),
+                    'httpOnly': bool(c._rest.get('HttpOnly', False)) if hasattr(c, '_rest') else False,
+                    'expires': c.expires,
+                })
+        except Exception as e:
+            log(f"⚠️ فشل تحميل Netscape: {e}")
     
-    return []
+    # فلترة: كوكيز replit.com فقط (مهم جداً!)
+    filtered = []
+    for c in cookies:
+        domain = (c.get('domain') or '').lstrip('.')
+        if 'replit' in domain.lower():
+            # تنظيف الحقول
+            clean = {
+                'name': c.get('name'),
+                'value': c.get('value'),
+                'domain': domain,
+                'path': c.get('path', '/'),
+            }
+            if c.get('secure'): clean['secure'] = True
+            if c.get('httpOnly'): clean['httpOnly'] = True
+            if c.get('sameSite') in ('Strict', 'Lax', 'None'):
+                clean['sameSite'] = c['sameSite']
+            if isinstance(c.get('expires'), (int, float)) and c['expires'] > 0:
+                clean['expires'] = int(c['expires'])
+            
+            if clean['name'] and clean['value']:
+                filtered.append(clean)
+    
+    log(f"🍪 تمت تصفية {len(filtered)} كوكي Replit من أصل {len(cookies)}")
+    return filtered
 
 
 def save_cookies(cookies, cookie_file):
-    """حفظ الكوكيز بصيغة JSON و Netscape معاً"""
+    """حفظ الكوكيز بصيغة JSON"""
     try:
         with open(cookie_file, 'w') as f:
             json.dump(cookies, f, indent=2)
-        log(f"💾 تم حفظ {len(cookies)} كوكي في {cookie_file}")
+        log(f"💾 تم حفظ {len(cookies)} كوكي")
     except Exception as e:
-        log(f"⚠️ خطأ في حفظ الكوكيز: {e}")
+        log(f"⚠️ خطأ حفظ الكوكيز: {e}")
 
 
-# ==================== تسجيل الدخول إلى Replit ====================
+# ==================== إعداد المتصفح الشبيه بالإنسان ====================
 
-def human_type(page, selector_list, text, field_name="حقل"):
-    """كتابة نص في حقل مع محاولة عدة selectors"""
-    for selector in selector_list:
-        try:
-            el = page.locator(selector).first
-            if el.count() > 0 and el.is_visible(timeout=2000):
-                el.click()
-                page.wait_for_timeout(200)
-                el.fill("")
-                page.wait_for_timeout(100)
-                el.type(text, delay=50)
-                log(f"✅ تم إدخال {field_name} عبر {selector}")
-                return True
-        except Exception:
-            continue
+def create_stealth_context(playwright, cookies=None):
+    """إنشاء سياق متصفح يحاكي مستخدماً حقيقياً"""
+    browser = playwright.chromium.launch(
+        headless=True,
+        args=[
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-blink-features=AutomationControlled',
+            '--disable-features=IsolateOrigins,site-per-process',
+            '--disable-web-security',
+            '--window-size=1920,1080',
+            '--start-maximized',
+            # مفاتيح مهمة لتجاوز كشف الأتمتة
+            '--disable-background-timer-throttling',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-renderer-backgrounding',
+        ]
+    )
     
-    # محاولة JavaScript كخطة بديلة
-    try:
-        result = page.evaluate(f"""
-            (text) => {{
-                const inputs = document.querySelectorAll('input');
-                for (const inp of inputs) {{
-                    const type = (inp.type || '').toLowerCase();
-                    const name = (inp.name || '').toLowerCase();
-                    const placeholder = (inp.placeholder || '').toLowerCase();
-                    const ariaLabel = (inp.getAttribute('aria-label') || '').toLowerCase();
-                    
-                    if ({selector_list!r}.some(s => {{
-                        const kw = s.toLowerCase();
-                        return type.includes(kw) || name.includes(kw) || 
-                               placeholder.includes(kw) || ariaLabel.includes(kw);
-                    }})) {{
-                        inp.focus();
-                        inp.value = text;
-                        inp.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                        inp.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                        return true;
-                    }}
-                }}
-                return false;
-            }}
-        """, text)
-        if result:
-            log(f"✅ تم إدخال {field_name} عبر JavaScript")
-            return True
-    except Exception as e:
-        log(f"⚠️ فشل JavaScript: {e}")
+    context = browser.new_context(
+        viewport={"width": 1920, "height": 1080},
+        user_agent=(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/131.0.0.0 Safari/537.36"
+        ),
+        locale="en-US",
+        timezone_id="Asia/Riyadh",
+        permissions=['geolocation', 'notifications'],
+        geolocation={"latitude": 24.7136, "longitude": 46.6753},
+        color_scheme="light",
+        device_scale_factor=1,
+        has_touch=False,
+        is_mobile=False,
+        java_script_enabled=True,
+        extra_http_headers={
+            "Accept-Language": "en-US,en;q=0.9,ar;q=0.8",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Sec-Ch-Ua": '"Chromium";v="131", "Not_A Brand";v="24"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Upgrade-Insecure-Requests": "1",
+        },
+    )
     
-    return False
-
-
-def click_first_available(page, selectors, description="زر"):
-    """النقر على أول عنصر متاح من قائمة selectors"""
-    for selector in selectors:
-        try:
-            el = page.locator(selector).first
-            if el.count() > 0 and el.is_visible(timeout=1500):
-                el.click(timeout=3000)
-                log(f"✅ تم النقر على {description}: {selector}")
-                return True
-        except Exception:
-            continue
-    return False
-
-
-def login_to_replit() -> bool:
-    """تسجيل دخول كامل إلى Replit مع دعم OAuth"""
-    global last_login_attempt
-    
-    now = time.time()
-    if now - last_login_attempt < LOGIN_COOLDOWN:
-        wait = int(LOGIN_COOLDOWN - (now - last_login_attempt))
-        log(f"⏸️ في فترة الانتظار ({wait}s) قبل محاولة دخول جديدة")
-        return False
-    
-    last_login_attempt = now
-    log("🔑 بدء عملية تسجيل الدخول إلى Replit...")
-    
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=[
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-blink-features=AutomationControlled',
-                    '--disable-gpu',
-                ]
-            )
-            
-            context = browser.new_context(
-                viewport={"width": 1366, "height": 768},
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                           "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                locale="en-US",
-            )
-            
-            # إخفاء علامات الأتمتة
-            context.add_init_script("""
-                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-                window.chrome = { runtime: {} };
-                Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-            """)
-            
-            page = context.new_page()
-            
-            # ===== 1. فتح صفحة تسجيل الدخول =====
-            log("🌐 فتح صفحة تسجيل الدخول...")
-            try:
-                page.goto(REPLIT_LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
-            except PWTimeout:
-                log("⚠️ انتهت مهلة تحميل صفحة الدخول")
-                browser.close()
-                return False
-            
-            page.wait_for_timeout(4000)
-            log(f"📍 URL الحالي: {page.url}")
-            
-            # ===== 2. محاولة الدخول عبر Google إذا ظهر زر =====
-            google_selectors = [
-                "button:has-text('Google')",
-                "a:has-text('Google')",
-                "button:has-text('Continue with Google')",
-                "[data-provider='google']",
-                "button[aria-label*='Google']",
-            ]
-            
-            if click_first_available(page, google_selectors, "زر Google"):
-                log("🔵 تم اختيار تسجيل الدخول عبر Google")
-                page.wait_for_timeout(5000)
-                
-                # اختيار الحساب من صفحة Google
-                try:
-                    # انتظار ظهور قائمة الحسابات
-                    page.wait_for_selector("[data-identifier], [data-email]", timeout=15000)
-                    
-                    # محاولة النقر على الحساب المطابق
-                    account_selectors = [
-                        f"div[data-identifier='{REPLIT_EMAIL}']",
-                        f"[data-email='{REPLIT_EMAIL}']",
-                        f"li:has-text('{REPLIT_EMAIL}')",
-                        "div[role='link']:has-text('@gmail.com')",
-                    ]
-                    
-                    if not click_first_available(page, account_selectors, "حساب Google"):
-                        # النقر على أول حساب متاح
-                        click_first_available(page, [
-                            "div[data-identifier]",
-                            "li div[role='link']",
-                        ], "أول حساب Google متاح")
-                    
-                    page.wait_for_timeout(8000)
-                    log(f"📍 بعد اختيار الحساب: {page.url}")
-                except Exception as e:
-                    log(f"⚠️ خطأ في OAuth: {e}")
-            
-            # ===== 3. إذا لم ننجح، ملء النموذج =====
-            if "login" in page.url.lower() or "signin" in page.url.lower():
-                log("📝 ملء نموذج البريد/كلمة المرور...")
-                
-                # حقل البريد
-                email_filled = human_type(page, [
-                    "input[type='email']",
-                    "input[name='email']",
-                    "input[name='username']",
-                    "input[placeholder*='email' i]",
-                    "input[placeholder*='username' i]",
-                    "input[autocomplete='email']",
-                    "input[autocomplete='username']",
-                    "input[id*='email' i]",
-                ], REPLIT_EMAIL, "البريد الإلكتروني")
-                
-                page.wait_for_timeout(1500)
-                
-                # زر Continue بعد البريد (بعض النماذج مرحلية)
-                if email_filled:
-                    click_first_available(page, [
-                        "button:has-text('Continue')",
-                        "button:has-text('Next')",
-                        "button[type='submit']",
-                    ], "زر Continue")
-                    page.wait_for_timeout(2500)
-                
-                # حقل كلمة المرور
-                password_filled = human_type(page, [
-                    "input[type='password']",
-                    "input[name='password']",
-                    "input[autocomplete='current-password']",
-                    "input[id*='password' i]",
-                ], REPLIT_PASSWORD, "كلمة المرور")
-                
-                page.wait_for_timeout(1500)
-                
-                # زر الإرسال
-                if password_filled:
-                    click_first_available(page, [
-                        "button[type='submit']:has-text('Log in')",
-                        "button[type='submit']:has-text('Sign in')",
-                        "button:has-text('Log in')",
-                        "button:has-text('Sign in')",
-                        "button[type='submit']",
-                    ], "زر تسجيل الدخول")
-                    
-                    page.wait_for_timeout(8000)
-            
-            # ===== 4. التحقق من نجاح الدخول =====
-            current_url = page.url
-            log(f"📍 URL بعد المحاولة: {current_url}")
-            
-            # علامات الفشل
-            if any(x in current_url.lower() for x in ['/login', '/signin']):
-                # ربما هناك تحقق إضافي
-                try:
-                    error_text = page.text_content("body") or ""
-                    if "incorrect" in error_text.lower() or "invalid" in error_text.lower():
-                        log("❌ بيانات دخول خاطئة")
-                    else:
-                        log("⚠️ ما زلنا في صفحة الدخول")
-                except:
-                    pass
-                
-                # محاولة أخيرة: التحقق من replit.com/home
-                try:
-                    page.goto("https://replit.com/home", wait_until="domcontentloaded", timeout=30000)
-                    page.wait_for_timeout(3000)
-                    current_url = page.url
-                except:
-                    pass
-            
-            if "login" in current_url.lower() or "signin" in current_url.lower():
-                log("❌ فشل تسجيل الدخول")
-                browser.close()
-                return False
-            
-            log("✅ تم تسجيل الدخول بنجاح!")
-            
-            # ===== 5. حفظ الكوكيز =====
-            cookies_raw = context.cookies()
-            cookies = [clean_cookie(c) for c in cookies_raw]
-            cookies = [c for c in cookies if c]
-            
-            browser.close()
-            
-            if cookies:
-                save_cookies(cookies, REPLIT_COOKIE_FILE)
-                return True
-            else:
-                log("❌ لم يتم الحصول على كوكيز")
-                return False
-    
-    except Exception as e:
-        log(f"❌ خطأ في تسجيل الدخول: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-
-# ==================== منطق Replit ====================
-
-def press_run_button(page, max_attempts=8) -> bool:
-    """البحث عن زر Run والضغط عليه"""
-    log("🔍 البحث عن زر Run...")
-    
-    run_selectors = [
-        "button:has-text('Run')",
-        "button[aria-label='Run']",
-        "button[aria-label*='Run' i]",
-        "[data-testid='run-button']",
-        "button:has(svg[viewBox*='play'])",
-        "button:has(span:has-text('Run'))",
-    ]
-    
-    for attempt in range(max_attempts):
-        page.wait_for_timeout(1500)
+    # إخفاء كل علامات الأتمتة المعروفة
+    context.add_init_script("""
+        // إخفاء webdriver
+        Object.defineProperty(navigator, 'webdriver', {
+            get: () => undefined,
+            configurable: true
+        });
         
-        # التحقق من وجود Stop أولاً
+        // إضافة chrome runtime
+        window.chrome = {
+            runtime: {},
+            loadTimes: function() {},
+            csi: function() {},
+            app: {}
+        };
+        
+        // إخفاء plugins فارغة
+        Object.defineProperty(navigator, 'plugins', {
+            get: () => [
+                {name: 'PDF Viewer', filename: 'internal-pdf-viewer'},
+                {name: 'Chrome PDF Viewer', filename: 'internal-pdf-viewer'},
+                {name: 'Chromium PDF Viewer', filename: 'internal-pdf-viewer'},
+            ],
+        });
+        
+        // اللغات
+        Object.defineProperty(navigator, 'languages', {
+            get: () => ['en-US', 'en', 'ar']
+        });
+        
+        // منصة
+        Object.defineProperty(navigator, 'platform', {
+            get: () => 'Win32'
+        });
+        
+        // hardware
+        Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+        Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+        
+        // إخفاء iframe detection
+        const originalQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = (parameters) => (
+            parameters.name === 'notifications' ?
+                Promise.resolve({ state: Notification.permission }) :
+                originalQuery(parameters)
+        );
+    """)
+    
+    # إضافة الكوكيز إذا وُجدت
+    if cookies:
         try:
-            stop = page.locator("button:has-text('Stop')").first
-            if stop.count() > 0 and stop.is_visible(timeout=1000):
-                log("✅ المشروع يعمل بالفعل")
-                return True
+            context.add_cookies(cookies)
+            log(f"✅ تمت إضافة {len(cookies)} كوكي إلى السياق")
+        except Exception as e:
+            log(f"⚠️ خطأ في إضافة الكوكيز: {e}")
+    
+    return browser, context
+
+
+# ==================== تسجيل الدخول التفاعلي ====================
+
+def login_interactive():
+    """تسجيل دخول بطريقة تشبه الإنسان"""
+    log("🔑 بدء تسجيل الدخول التفاعلي...")
+    
+    with sync_playwright() as p:
+        browser, context = create_stealth_context(p)
+        page = context.new_page()
+        
+        # فتح صفحة الدخول
+        log(f"🌐 فتح {REPLIT_LOGIN_URL}")
+        page.goto(REPLIT_LOGIN_URL, wait_until="networkidle", timeout=60000)
+        
+        # انتظار تحميل كامل
+        page.wait_for_timeout(3000 + int(time.time() * 1000) % 2000)
+        
+        # لقطة تشخيصية
+        try:
+            page.screenshot(path="debug_login.png")
+            log("📸 تم حفظ debug_login.png")
         except:
             pass
         
-        if click_first_available(page, run_selectors, "زر Run"):
-            page.wait_for_timeout(5000)
-            return True
+        # البحث عن حقل البريد بطريقة إنسانية
+        log("📧 إدخال البريد الإلكتروني...")
         
-        # محاولة JavaScript
+        email_filled = False
+        email_selectors = [
+            'input[name="username"]',
+            'input[type="email"]',
+            'input#email',
+            'input[autocomplete="email"]',
+            'input[autocomplete="username"]',
+        ]
+        
+        for sel in email_selectors:
+            try:
+                el = page.locator(sel).first
+                if el.count() > 0 and el.is_visible(timeout=3000):
+                    # حركة ماوس وهمية قبل الكتابة
+                    box = el.bounding_box()
+                    if box:
+                        page.mouse.move(
+                            box['x'] + box['width'] / 2,
+                            box['y'] + box['height'] / 2,
+                            steps=15
+                        )
+                        page.wait_for_timeout(300)
+                    
+                    el.click()
+                    page.wait_for_timeout(500)
+                    el.fill("")
+                    page.wait_for_timeout(200)
+                    
+                    # كتابة حرف بحرف (بطيء) مع فواصل عشوائية
+                    for char in REPLIT_EMAIL:
+                        el.type(char)
+                        page.wait_for_timeout(50 + int(time.time() * 1000) % 100)
+                    
+                    log(f"✅ تم إدخال البريد: {sel}")
+                    email_filled = True
+                    break
+            except Exception as e:
+                continue
+        
+        if not email_filled:
+            log("❌ لم يتم العثور على حقل البريد")
+            page.screenshot(path="debug_no_email_field.png")
+            browser.close()
+            return False
+        
+        page.wait_for_timeout(1000)
+        
+        # البحث عن حقل كلمة المرور
+        log("🔒 إدخال كلمة المرور...")
+        
+        password_filled = False
+        password_selectors = [
+            'input[type="password"]',
+            'input[name="password"]',
+            'input#password',
+            'input[autocomplete="current-password"]',
+        ]
+        
+        for sel in password_selectors:
+            try:
+                el = page.locator(sel).first
+                if el.count() > 0 and el.is_visible(timeout=3000):
+                    box = el.bounding_box()
+                    if box:
+                        page.mouse.move(
+                            box['x'] + box['width'] / 2,
+                            box['y'] + box['height'] / 2,
+                            steps=15
+                        )
+                        page.wait_for_timeout(300)
+                    
+                    el.click()
+                    page.wait_for_timeout(500)
+                    el.fill("")
+                    page.wait_for_timeout(200)
+                    
+                    for char in REPLIT_PASSWORD:
+                        el.type(char)
+                        page.wait_for_timeout(50 + int(time.time() * 1000) % 100)
+                    
+                    log(f"✅ تم إدخال كلمة المرور: {sel}")
+                    password_filled = True
+                    break
+            except:
+                continue
+        
+        if not password_filled:
+            log("❌ لم يتم العثور على حقل كلمة المرور")
+            page.screenshot(path="debug_no_password_field.png")
+            browser.close()
+            return False
+        
+        page.wait_for_timeout(1000)
+        
+        # زر تسجيل الدخول
+        log("🖱️ الضغط على زر تسجيل الدخول...")
+        
+        submit_selectors = [
+            'button[type="submit"]',
+            'button:has-text("Log in")',
+            'button:has-text("Sign in")',
+            'button:has-text("Continue")',
+            'input[type="submit"]',
+        ]
+        
+        submitted = False
+        for sel in submit_selectors:
+            try:
+                btn = page.locator(sel).first
+                if btn.count() > 0 and btn.is_visible(timeout=2000):
+                    box = btn.bounding_box()
+                    if box:
+                        page.mouse.move(
+                            box['x'] + box['width'] / 2,
+                            box['y'] + box['height'] / 2,
+                            steps=10
+                        )
+                        page.wait_for_timeout(200)
+                    
+                    btn.click()
+                    log(f"✅ تم النقر على زر الدخول: {sel}")
+                    submitted = True
+                    break
+            except:
+                continue
+        
+        if not submitted:
+            # محاولة الضغط على Enter
+            page.keyboard.press("Enter")
+            log("⌨️ تم الضغط على Enter")
+        
+        # انتظار النتيجة
+        log("⏳ انتظار نتيجة تسجيل الدخول...")
+        page.wait_for_timeout(8000)
+        
+        # التحقق من النتيجة
+        current_url = page.url
+        log(f"📍 URL الحالي: {current_url}")
+        
+        # التحقق من نجاح الدخول
+        try:
+            page.goto("https://replit.com/home", wait_until="domcontentloaded", timeout=30000)
+            page.wait_for_timeout(4000)
+            current_url = page.url
+            log(f"📍 بعد فتح Home: {current_url}")
+        except:
+            pass
+        
+        if "login" in current_url.lower() or "signin" in current_url.lower():
+            log("❌ فشل تسجيل الدخول - ما زلنا في صفحة الدخول")
+            page.screenshot(path="debug_login_failed.png")
+            browser.close()
+            return False
+        
+        # نجح الدخول - احفظ الكوكيز
+        log("✅ تم تسجيل الدخول بنجاح!")
+        
+        cookies_raw = context.cookies()
+        # حفظ فقط كوكيز replit.com
+        cookies = []
+        for c in cookies_raw:
+            if 'replit' in c.get('domain', '').lower():
+                cookies.append({
+                    'name': c['name'],
+                    'value': c['value'],
+                    'domain': c['domain'].lstrip('.'),
+                    'path': c.get('path', '/'),
+                    'secure': c.get('secure', False),
+                    'httpOnly': c.get('httpOnly', False),
+                    'sameSite': c.get('sameSite', 'Lax'),
+                    **({'expires': int(c['expires'])} if c.get('expires') and c['expires'] > 0 else {}),
+                })
+        
+        browser.close()
+        
+        if cookies:
+            save_cookies(cookies, REPLIT_COOKIE_FILE)
+            return True
+        else:
+            log("⚠️ لم يتم الحصول على كوكيز")
+            return False
+
+
+# ==================== فتح المشروع ====================
+
+def find_run_button(page):
+    """البحث عن زر Run بطرق متعددة"""
+    log("🔍 البحث عن زر Run...")
+    
+    # selectors حسب الأولوية
+    run_selectors = [
+        # النص المباشر
+        'button:has-text("Run")',
+        '[role="button"]:has-text("Run")',
+        # aria-label
+        'button[aria-label="Run"]',
+        'button[aria-label*="Run" i]',
+        # data attributes
+        '[data-cy="run-button"]',
+        '[data-testid="run-button"]',
+        # الأيقونة
+        'button:has(svg[viewBox="0 0 24 24"])',
+        # في الهيدر
+        'header button:has-text("Run")',
+        # المنسدلة
+        'button[aria-haspopup="menu"]:has-text("Run")',
+    ]
+    
+    for attempt in range(15):
+        # 1. جرب selectors مباشرة
+        for sel in run_selectors:
+            try:
+                el = page.locator(sel).first
+                if el.count() > 0 and el.is_visible(timeout=2000):
+                    text = (el.text_content() or "").strip()
+                    label = el.get_attribute("aria-label") or ""
+                    if "run" in text.lower() or "run" in label.lower():
+                        log(f"✅ وجد زر Run عبر: {sel} (نص: '{text}')")
+                        return el
+            except:
+                continue
+        
+        # 2. جرب JavaScript
         try:
             result = page.evaluate("""
                 () => {
-                    const btns = document.querySelectorAll('button');
-                    for (const b of btns) {
-                        const t = (b.textContent || '').trim().toLowerCase();
-                        const l = (b.getAttribute('aria-label') || '').toLowerCase();
-                        if ((t === 'run' || l === 'run') && b.offsetParent !== null) {
-                            b.click();
-                            return true;
+                    // ابحث في كل الأزرار
+                    const buttons = document.querySelectorAll('button, [role="button"], a[role="button"]');
+                    for (const btn of buttons) {
+                        const text = (btn.textContent || '').trim().toLowerCase();
+                        const label = (btn.getAttribute('aria-label') || '').toLowerCase();
+                        const testId = (btn.getAttribute('data-testid') || '').toLowerCase();
+                        
+                        if ((text === 'run' || label.includes('run') || testId.includes('run')) 
+                            && btn.offsetParent !== null) {
+                            const rect = btn.getBoundingClientRect();
+                            if (rect.width > 0 && rect.height > 0) {
+                                return {
+                                    x: rect.x + rect.width / 2,
+                                    y: rect.y + rect.height / 2,
+                                    text: text,
+                                    tag: btn.tagName,
+                                };
+                            }
                         }
                     }
-                    return false;
+                    return null;
                 }
             """)
+            
             if result:
-                log("✅ تم النقر على Run عبر JavaScript")
-                page.wait_for_timeout(5000)
+                log(f"✅ وجد زر Run عبر JS في ({result['x']}, {result['y']})")
+                # انقر بإحداثيات الماوس (أكثر إنسانية)
+                page.mouse.move(result['x'], result['y'], steps=10)
+                page.wait_for_timeout(200)
+                page.mouse.click(result['x'], result['y'])
                 return True
         except:
             pass
         
-        if attempt < max_attempts - 1:
-            log(f"⚠️ محاولة {attempt+1}/{max_attempts}، إعادة تحميل...")
-            try:
-                page.reload(wait_until="domcontentloaded")
-            except:
-                pass
+        # 3. افحص حالة المشروع - ربما يعمل بالفعل
+        try:
+            # ابحث عن أي مؤشر على أن المشروع يعمل
+            working_indicators = [
+                'button:has-text("Stop")',
+                '[class*="console"]',
+                'iframe[src*="replit.dev"]',
+                'text=/running|active|listening/i',
+            ]
+            for ind in working_indicators:
+                el = page.locator(ind).first
+                if el.count() > 0:
+                    try:
+                        if el.is_visible(timeout=500):
+                            log(f"✅ المشروع يعمل بالفعل (مؤشر: {ind})")
+                            return "already_running"
+                    except:
+                        pass
+        except:
+            pass
+        
+        if attempt < 14:
+            log(f"⚠️ محاولة {attempt+1}/15...")
+            page.wait_for_timeout(2000)
     
-    return False
+    return None
 
 
-def get_webview_url(page) -> str:
+def get_webview_url(page):
     """استخراج رابط Webview"""
-    log("🔍 البحث عن رابط Webview...")
+    log("🔍 البحث عن Webview URL...")
     
-    for _ in range(5):
-        # from iframes
+    for _ in range(10):
+        # من iframes
         try:
             for iframe in page.locator("iframe").all():
                 src = iframe.get_attribute("src") or ""
@@ -493,32 +552,12 @@ def get_webview_url(page) -> str:
         except:
             pass
         
-        # from page text
+        # من نص الصفحة
         try:
-            body = page.text_content("body") or ""
-            matches = re.findall(WEBVIEW_PATTERN, body)
+            html = page.content()
+            matches = re.findall(WEBVIEW_PATTERN, html)
             if matches:
                 return matches[0]
-        except:
-            pass
-        
-        # from JS
-        try:
-            result = page.evaluate(r"""
-                () => {
-                    const re = /https?:\/\/[a-f0-9\-]+\.replit\.dev(?::\d+)?/;
-                    const text = document.body.innerText || '';
-                    let m = text.match(re);
-                    if (m) return m[0];
-                    for (const f of document.querySelectorAll('iframe')) {
-                        m = (f.src || '').match(re);
-                        if (m) return m[0];
-                    }
-                    return null;
-                }
-            """)
-            if result:
-                return result
         except:
             pass
         
@@ -527,240 +566,128 @@ def get_webview_url(page) -> str:
     return None
 
 
-def run_replit_once() -> bool:
-    """دورة واحدة لـ Replit"""
+def open_project_once():
+    """دورة واحدة لفتح المشروع"""
     global last_webview_url, last_update_time
     
-    log("=" * 50)
-    log("🔄 دورة Replit")
+    log("=" * 60)
+    log("🔄 دورة فتح المشروع")
     
-    cookies = load_cookies_any_format(REPLIT_COOKIE_FILE)
-    webview_url = None
-    need_login = False
+    cookies = load_cookies(REPLIT_COOKIE_FILE)
     
-    # إذا لم توجد كوكيز، سجّل دخول
     if not cookies:
-        log("📂 لا توجد كوكيز - محاولة تسجيل الدخول...")
-        if not login_to_replit():
+        log("📂 لا توجد كوكيز Replit - جاري تسجيل الدخول...")
+        if not login_interactive():
             return False
-        cookies = load_cookies_any_format(REPLIT_COOKIE_FILE)
+        cookies = load_cookies(REPLIT_COOKIE_FILE)
         if not cookies:
             return False
     
+    need_login = False
+    webview_url = None
+    
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=['--no-sandbox', '--disable-setuid-sandbox',
-                      '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
-            )
-            context = browser.new_context(
-                viewport={"width": 1366, "height": 768},
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                           "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            )
-            context.add_init_script(
-                "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
-            )
-            
-            # إضافة الكوكيز مع تجاهل الأخطاء
-            added = 0
-            for c in cookies:
-                try:
-                    context.add_cookies([c])
-                    added += 1
-                except Exception:
-                    continue
-            log(f"🍪 تمت إضافة {added}/{len(cookies)} كوكي")
-            
+            browser, context = create_stealth_context(p, cookies)
             page = context.new_page()
             
+            log(f"📂 فتح المشروع: {REPLIT_PROJECT_URL}")
             try:
                 page.goto(REPLIT_PROJECT_URL, wait_until="domcontentloaded", timeout=60000)
-                page.wait_for_timeout(5000)
             except PWTimeout:
-                log("⚠️ انتهت مهلة التحميل")
+                log("⚠️ انتهت المهلة")
                 browser.close()
                 return False
             
-            # التحقق من انتهاء الكوكيز
-            if "/login" in page.url or "/signin" in page.url:
-                log("❌ الكوكيز منتهية - إعادة تسجيل الدخول...")
+            page.wait_for_timeout(6000)
+            
+            current_url = page.url
+            log(f"📍 URL: {current_url}")
+            
+            # لقطة تشخيصية
+            try:
+                page.screenshot(path="debug_project.png")
+            except:
+                pass
+            
+            # التحقق من الدخول
+            if "/login" in current_url or "/signin" in current_url:
+                log("❌ الكوكيز منتهية")
                 need_login = True
             else:
                 log("✅ تم فتح المشروع")
                 
-                # الضغط على Run
-                press_run_button(page, max_attempts=6)
+                # ابحث عن زر Run
+                result = find_run_button(page)
                 
-                # استخراج الرابط
+                if result is True:
+                    log("✅ تم الضغط على Run")
+                    page.wait_for_timeout(8000)
+                elif result == "already_running":
+                    log("✅ المشروع يعمل بالفعل")
+                elif result is None:
+                    log("⚠️ لم يُعثر على زر Run - ربما واجهة جديدة")
+                
+                # استخرج رابط Webview
                 webview_url = get_webview_url(page)
+                
+                if not webview_url:
+                    # جرب إعادة التحميل
+                    page.reload(wait_until="domcontentloaded")
+                    page.wait_for_timeout(5000)
+                    webview_url = get_webview_url(page)
             
             browser.close()
     
     except Exception as e:
         log(f"❌ خطأ: {e}")
+        import traceback
+        traceback.print_exc()
         return False
     
-    # إذا احتجنا تسجيل دخول، افعل ذلك وأعد المحاولة
+    # إذا احتجنا تسجيل دخول
     if need_login:
+        log("🔄 حذف الكوكيز القديمة وإعادة تسجيل الدخول...")
         try:
             os.remove(REPLIT_COOKIE_FILE)
         except:
             pass
-        if login_to_replit():
-            return run_replit_once()
+        
+        if login_interactive():
+            return open_project_once()
         return False
     
+    # حفظ النتيجة
     if webview_url:
         last_webview_url = webview_url
         last_update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log(f"🌐 Webview: {webview_url}")
+        
         with open("webview_url.txt", "w") as f:
             f.write(f"{webview_url}\n{last_update_time}\n")
+        
         return True
     else:
         log("⚠️ لم يتم العثور على رابط Webview")
         return False
 
 
-# ==================== Google Cloud Shell ====================
-
-def get_shell_status(page) -> str:
-    try:
-        for sel in [
-            "iframe[src*='cloud-shell']",
-            "iframe[title*='Cloud Shell']",
-            "div[class*='terminal']",
-        ]:
-            try:
-                el = page.locator(sel).first
-                if el.count() > 0 and el.is_visible(timeout=1000):
-                    return "running"
-            except:
-                continue
-        return "stopped"
-    except:
-        return "unknown"
-
-
-def activate_shell(page) -> bool:
-    log("🔍 البحث عن زر تفعيل Cloud Shell...")
-    
-    selectors = [
-        "button:has-text('Activate Cloud Shell')",
-        "button:has-text('Open Cloud Shell')",
-        "button:has-text('Start Cloud Shell')",
-        "button[aria-label*='Cloud Shell']",
-        "button:has-text('activate')",
-        "button:has(svg[viewBox*='terminal'])",
-    ]
-    
-    for attempt in range(5):
-        if click_first_available(page, selectors, "زر Cloud Shell"):
-            page.wait_for_timeout(5000)
-            return True
-        page.wait_for_timeout(2000)
-    
-    return False
-
-
-def run_google_once() -> bool:
-    global last_google_status, last_google_update
-    
-    log("🔄 دورة Google Cloud Shell")
-    
-    cookies = load_cookies_any_format(GOOGLE_COOKIE_FILE)
-    if not cookies:
-        log("❌ لا توجد كوكيز Google")
-        last_google_status = "no_cookies"
-        last_google_update = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        return False
-    
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=['--no-sandbox', '--disable-setuid-sandbox',
-                      '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
-            )
-            context = browser.new_context(
-                viewport={"width": 1366, "height": 768},
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                           "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            )
-            context.add_init_script(
-                "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
-            )
-            
-            for c in cookies:
-                try:
-                    context.add_cookies([c])
-                except:
-                    continue
-            
-            page = context.new_page()
-            page.goto(GOOGLE_PROJECT_URL, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(5000)
-            
-            status = get_shell_status(page)
-            log(f"📊 حالة Shell: {status}")
-            last_google_status = status
-            
-            if status == "stopped":
-                if activate_shell(page):
-                    last_google_status = "activated"
-            
-            last_google_update = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            
-            with open("google_shell_status.txt", "w") as f:
-                f.write(f"آخر تحديث: {last_google_update}\nالحالة: {last_google_status}\n")
-            
-            browser.close()
-            return True
-    except Exception as e:
-        log(f"❌ خطأ Google: {e}")
-        last_google_status = "error"
-        last_google_update = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        return False
-
-
-# ==================== Keep Alive Server ====================
+# ==================== Keep Alive ====================
 
 class KeepAliveHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        parsed = urlparse(self.path)
-        if parsed.path == '/':
+        if urlparse(self.path).path == '/':
             self.send_response(200)
             self.send_header('Content-type', 'text/html; charset=utf-8')
             self.end_headers()
             html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8">
-            <meta http-equiv="refresh" content="30"><title>Keep Alive</title>
-            <style>body{{font-family:Arial;text-align:center;padding:50px;
-            background:#0a0a0a;color:#00ff88}}h1{{font-size:2.5em}}
-            .box{{background:#1a1a2e;padding:20px;border-radius:10px;margin:20px 0;
-            border:1px solid #333}}.box-title{{color:#00ccff}}
-            .time{{color:#888;font-size:0.85em}}</style></head><body>
-            <h1>🚀 Keep Alive Active</h1>
-            <div class="time">تم التحديث: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</div>
-            <div class="box"><div class="box-title">🔄 Replit</div>
-            <div>{last_webview_url or '⏳ جاري البحث...'}</div>
-            <div class="time">آخر تحديث: {last_update_time or '—'}</div></div>
-            <div class="box"><div class="box-title">☁️ Google</div>
-            <div>الحالة: {last_google_status or '⏳'}</div>
-            <div class="time">آخر تحديث: {last_google_update or '—'}</div></div>
+            <title>Keep Alive</title></head><body>
+            <h1>Keep Alive Active</h1>
+            <p>Replit: {last_webview_url or 'pending'}</p>
+            <p>Updated: {last_update_time or '-'}</p>
+            <p>Now: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
             </body></html>"""
             self.wfile.write(html.encode('utf-8'))
-        elif parsed.path == '/status':
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({
-                "status": "running",
-                "timestamp": datetime.now().isoformat(),
-                "replit": {"webview_url": last_webview_url, "last_update": last_update_time},
-                "google": {"status": last_google_status, "last_update": last_google_update},
-            }).encode('utf-8'))
         else:
             self.send_response(404)
             self.end_headers()
@@ -772,7 +699,7 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
 def run_keep_alive_server():
     try:
         server = HTTPServer(('0.0.0.0', KEEP_ALIVE_PORT), KeepAliveHandler)
-        log(f"🔌 خادم Keep Alive على المنفذ {KEEP_ALIVE_PORT}")
+        log(f"🔌 Keep Alive على {KEEP_ALIVE_PORT}")
         server.serve_forever()
     except Exception as e:
         log(f"⚠️ خطأ Keep Alive: {e}")
@@ -783,51 +710,34 @@ def run_keep_alive_server():
 def main():
     global running
     
-    log("🔥 بدء السكربت المدمج")
-    log(f"📁 Replit cookies: {REPLIT_COOKIE_FILE}")
-    log(f"📁 Google cookies: {GOOGLE_COOKIE_FILE}")
+    log("🔥 بدء السكربت")
+    log(f"📁 كوكيز: {REPLIT_COOKIE_FILE}")
     
-    # فحص أولي: هل توجد كوكيز؟
+    # إذا لم توجد كوكيز، سجل دخول أولي
     if not os.path.exists(REPLIT_COOKIE_FILE):
-        log("🔑 لا توجد كوكيز Replit - تسجيل دخول أولي...")
-        if login_to_replit():
-            log("✅ تم تسجيل الدخول بنجاح وحفظ الكوكيز")
-        else:
-            log("⚠️ فشل تسجيل الدخول الأولي - سيُعاد المحاولة لاحقاً")
+        log("🔑 لا توجد كوكيز - تسجيل دخول أولي...")
+        login_interactive()
     
     threading.Thread(target=run_keep_alive_server, daemon=True).start()
     
-    google_counter = 0
-    replit_counter = 0
-    
+    counter = 0
     while running:
         try:
-            # Google كل دورة (20 ثانية)
-            if google_counter % 2 == 0:
-                run_google_once()
+            open_project_once()
+            counter += 1
             
-            # Replit كل 3 دورات (~30 ثانية)
-            if replit_counter % 3 == 0:
-                run_replit_once()
-            
-            google_counter += 1
-            replit_counter += 1
-            
-            log("⏳ الانتظار 10 ثواني...")
-            for i in range(10, 0, -1):
+            log(f"⏳ انتظار {REPLIT_REFRESH_INTERVAL}s...")
+            for _ in range(REPLIT_REFRESH_INTERVAL):
                 if not running:
                     break
-                if i <= 3 or i == 5:
-                    log(f"⏳ {i}s")
                 time.sleep(1)
         
         except KeyboardInterrupt:
-            log("⏹️ إيقاف")
             running = False
             break
         except Exception as e:
             log(f"❌ خطأ عام: {e}")
-            time.sleep(5)
+            time.sleep(10)
 
 
 if __name__ == "__main__":
