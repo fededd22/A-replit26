@@ -1,57 +1,154 @@
-import asyncio
-import os
-import re
-import json
-from telethon import TelegramClient, events
-from playwright.async_api import async_playwright
-import tempfile
-import shutil
+#!/usr/bin/env python3
+"""
+سكربت لتشغيل مشروع Replit مع Keep Alive + Proxy
+- يحافظ على الجلسة نشطة مع إمكانية العمل المتزامن
+- يمرر جميع الطلبات عبر بروكسي 711proxy
+"""
+
+import sys
+import time
 import http.cookiejar
+import re
+import os
+import subprocess
+import signal
+import threading
+import socket
+import requests
 from datetime import datetime
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
 
-# ✅ CapSolver (يُستخدم فقط كخطة بديلة عند فشل الكوكيز)
-try:
-    from capsolver_core import create_capsolver
-    CAPSOLVER_AVAILABLE = True
-except ImportError:
-    CAPSOLVER_AVAILABLE = False
+from playwright.sync_api import sync_playwright
 
+# ==================== إعدادات البروكسي ====================
+PROXY_URL = "http://USER608261-zone-custom-region-AW-st-Aruba:1279bb@global.rotgb.711proxy.com:10000"
 
-# ===============================
-# إعدادات تلغرام
-# ===============================
-API_ID = '30687411'
-API_HASH = '8fe205c97b03657f280f62832296680f'
-BOT_TOKEN = '7848279718:AAHuK4uSPQQfRmwKxi-YbSDh_NGXaVxIjh0'
+proxies = {
+    "http": PROXY_URL,
+    "https": PROXY_URL,
+}
 
-client = TelegramClient('AM2_D3', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
+# صيغة Playwright للبروكسي
+PLAYWRIGHT_PROXY = {
+    "server": "http://global.rotgb.711proxy.com:10000",
+    "username": "USER608261-zone-custom-region-AW-st-Aruba",
+    "password": "1279bb",
+}
+# ============================================================
 
-
-# ===============================
-# إعدادات Replit
-# ===============================
-REPLIT_PROJECT_URL = "https://replit.com/@karimdeka85/v2ray-vless-server-dashboard-5zip"
-REPLIT_COOKIE_FILE = "cookies.txt"
+COOKIE_FILE = "cookies.txt"
+PROJECT_URL = "https://replit.com/@karimdeka85/v2ray-vless-server-dashboard-5zip"
+REFRESH_INTERVAL_SECONDS = 30
 WEBVIEW_PATTERN = r"https?://[a-f0-9\-]+\.replit\.dev:\d+"
-
-# ✅ بيانات تسجيل الدخول (تُستخدم فقط عند /login أو عند فشل الكوكيز)
-REPLIT_EMAIL = "karimdeka85@gmail.com"
-REPLIT_PASSWORD = "karimdeka92"
-
-# ✅ مفتاح CapSolver (يُستخدم فقط كخطة بديلة)
-CAPSOLVER_API_KEY = "CAP-63E69BC05FC9923B039561B8516172F2558DB7A7A2258BF0FD275C042D72A62E"
+KEEP_ALIVE_PORT = 8080
+PING_INTERVAL = 60
 
 
-# ===============================
-# أدوات مساعدة
-# ===============================
+class KeepAliveHandler(BaseHTTPRequestHandler):
+    """معالج طلبات HTTP لخدمة Keep Alive"""
+
+    def do_GET(self):
+        """معالجة طلبات GET"""
+        parsed = urlparse(self.path)
+
+        if parsed.path == '/':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html; charset=utf-8')
+            self.end_headers()
+            html_content = """
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <title>Keep Alive - Replit Session</title>
+                <style>
+                    body { font-family: Arial; text-align: center; padding: 50px; background: #0a0a0a; color: #00ff88; }
+                    h1 { font-size: 3em; }
+                    .status { font-size: 1.5em; margin: 20px 0; }
+                    .time { color: #888; font-size: 0.8em; }
+                    .success { color: #00ff88; }
+                    .proxy { color: #ffaa00; font-size: 0.9em; margin-top: 20px; }
+                </style>
+            </head>
+            <body>
+                <h1>🚀 Keep Alive Active</h1>
+                <div class="status success">✅ الجلسة نشطة ومستمرة</div>
+                <div class="time">تم التحديث: """ + datetime.now().strftime('%Y-%m-%d %H:%M:%S') + """</div>
+                <br>
+                <div>⏳ تشغيل المشروع بشكل مستمر</div>
+                <div class="proxy">🔒 البروكسي: نشط (Aruba)</div>
+                <div style="margin-top: 30px; font-size: 0.9em; color: #666;">
+                    <p>📱 يمكنك العمل في ترمينال آخر أثناء تشغيل هذا السكربت</p>
+                    <p>🔄 يتم إعادة تشغيل المشروع كل """ + str(REFRESH_INTERVAL_SECONDS) + """ ثانية</p>
+                </div>
+            </body>
+            </html>
+            """
+            self.wfile.write(html_content.encode('utf-8'))
+
+        elif parsed.path == '/status':
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            status = f'{{"status": "running", "proxy": "active", "timestamp": "{datetime.now().isoformat()}", "interval": {REFRESH_INTERVAL_SECONDS}}}'
+            self.wfile.write(status.encode('utf-8'))
+        else:
+            self.send_response(404)
+            self.end_headers()
+            self.wfile.write(b'Not Found')
+
+    def do_HEAD(self):
+        """معالجة طلبات HEAD للـ Keep Alive"""
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+
+    def log_message(self, format, *args):
+        """تعطيل تسجيل الطلبات لتجنب الفوضى"""
+        pass
+
+
+def run_keep_alive_server():
+    """تشغيل خادم Keep Alive في خيط منفصل"""
+    try:
+        server = HTTPServer(('0.0.0.0', KEEP_ALIVE_PORT), KeepAliveHandler)
+        log(f"🔌 خادم Keep Alive يعمل على المنفذ {KEEP_ALIVE_PORT}")
+        server.serve_forever()
+    except Exception as e:
+        log(f"⚠️ خطأ في خادم Keep Alive: {e}")
+
+
 def log(msg: str):
+    """طباعة رسالة مع الطابع الزمني"""
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{ts}] {msg}", flush=True)
 
 
+def test_proxy():
+    """اختبار البروكسي قبل التشغيل"""
+    log("🔍 اختبار البروكسي...")
+    try:
+        r = requests.get(
+            "https://api.ipify.org?format=json",
+            proxies=proxies,
+            timeout=20
+        )
+        if r.status_code == 200:
+            ip = r.json().get("ip", "unknown")
+            log(f"✅ البروكسي يعمل - IP: {ip}")
+            return True
+        else:
+            log(f"⚠️ البروكسي أرجع كود: {r.status_code}")
+            return False
+    except Exception as e:
+        log(f"❌ فشل اختبار البروكسي: {e}")
+        return False
+
+
 def netscape_cookie_to_playwright(cookie) -> dict:
-    pw = {
+    """تحويل الكوكيز إلى صيغة Playwright"""
+    pw_cookie = {
         "name": cookie.name,
         "value": cookie.value,
         "domain": cookie.domain,
@@ -60,234 +157,34 @@ def netscape_cookie_to_playwright(cookie) -> dict:
         "httpOnly": bool(cookie._rest.get("HttpOnly", False)) if hasattr(cookie, "_rest") else False,
     }
     if cookie.expires:
-        pw["expires"] = int(cookie.expires)
-    return pw
+        pw_cookie["expires"] = cookie.expires
+    return pw_cookie
 
 
-def load_replit_cookies_netscape() -> list:
-    """تحميل كوكيز Netscape"""
-    if not os.path.exists(REPLIT_COOKIE_FILE):
+def load_cookies_for_playwright():
+    """تحميل الكوكيز من الملف"""
+    if not os.path.exists(COOKIE_FILE):
+        log(f"❌ ملف {COOKIE_FILE} مش موجود")
         return []
-    jar = http.cookiejar.MozillaCookieJar(REPLIT_COOKIE_FILE)
+
+    jar = http.cookiejar.MozillaCookieJar(COOKIE_FILE)
     try:
         jar.load(ignore_discard=True, ignore_expires=True)
     except Exception as e:
-        log(f"⚠️ فشل تحميل Netscape: {e}")
+        log(f"❌ خطأ في تحميل الكوكيز: {e}")
         return []
-    return [netscape_cookie_to_playwright(c) for c in jar]
+
+    cookies = [netscape_cookie_to_playwright(c) for c in jar]
+    log(f"✅ تم تحميل {len(cookies)} كوكي")
+    return cookies
 
 
-def load_replit_cookies_json() -> list:
-    """تحميل كوكيز JSON"""
-    if not os.path.exists(REPLIT_COOKIE_FILE):
-        return []
-    try:
-        with open(REPLIT_COOKIE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, list):
-            return data
-    except Exception:
-        pass
-    return []
+def press_run_button_with_retry(page, max_attempts=10):
+    """محاولات للضغط على زر Run"""
+    log("🔍 جاري البحث عن زر Run...")
 
-
-def load_any_cookies() -> list:
-    """✅ الأولوية: JSON → Netscape"""
-    cookies = load_replit_cookies_json()
-    if cookies:
-        log(f"✅ تم تحميل {len(cookies)} كوكي (JSON)")
-        return cookies
-    cookies = load_replit_cookies_netscape()
-    if cookies:
-        log(f"✅ تم تحميل {len(cookies)} كوكي (Netscape)")
-        return cookies
-    return []
-
-
-def cookies_file_exists_and_valid() -> bool:
-    """التحقق من وجود ملف كوكيز غير فارغ"""
-    if not os.path.exists(REPLIT_COOKIE_FILE):
-        return False
-    if os.path.getsize(REPLIT_COOKIE_FILE) < 50:
-        return False
-    # التحقق من وجود كوكي جلسة replit على الأقل
-    cookies = load_any_cookies()
-    if not cookies:
-        return False
-    # ابحث عن كوكي مهم
-    important_names = {"connect.sid", "__Secure-next-auth.session-token", "replit_session", "session"}
-    for c in cookies:
-        if c.get("name") in important_names:
-            return True
-    # إذا لم نجد واحداً بالاسم، نقبل الملف إذا كان يحتوي كوكيز replit
-    for c in cookies:
-        if "replit" in (c.get("domain") or "").lower():
-            return True
-    return len(cookies) > 0
-
-
-def clean_cookie(cookie):
-    allowed = ['name', 'value', 'domain', 'path', 'expires', 'httpOnly', 'secure', 'sameSite']
-    cleaned = {}
-    for field in allowed:
-        if field in cookie:
-            if field == 'expires':
-                if isinstance(cookie[field], (int, float)):
-                    cleaned[field] = cookie[field]
-                elif isinstance(cookie[field], str):
-                    try:
-                        dt = datetime.fromisoformat(cookie[field].replace('Z', '+00:00'))
-                        cleaned[field] = int(dt.timestamp())
-                    except Exception:
-                        pass
-            elif field in ('httpOnly', 'secure'):
-                cleaned[field] = bool(cookie[field])
-            elif field == 'sameSite':
-                if cookie[field] in ['Strict', 'Lax', 'None']:
-                    cleaned[field] = cookie[field]
-            else:
-                cleaned[field] = str(cookie[field])
-
-    if 'name' not in cleaned or 'value' not in cleaned:
-        return None
-    if 'domain' in cleaned:
-        cleaned['domain'] = cleaned['domain'].lstrip('.')
-    return cleaned
-
-
-# ===============================
-# حل CAPTCHA (خطة بديلة فقط)
-# ===============================
-async def solve_captcha_on_page(page, chat_id=None) -> bool:
-    if not CAPSOLVER_AVAILABLE or not CAPSOLVER_API_KEY:
-        log("⚠️ CapSolver غير متاح")
-        return False
-    try:
-        log("🛡️ محاولة حل CAPTCHA...")
-        cap = create_capsolver(api_key=CAPSOLVER_API_KEY, default_timeout=180, polling_interval=5)
-        detected = await cap.detect(page)
-        if not detected:
-            return True
-        log(f"🔍 تم اكتشاف: {detected}")
-        results = await cap.solve_on_page(page)
-        for r in results:
-            if r.error:
-                log(f"❌ فشل: {r.error}")
-                return False
-        return True
-    except Exception as e:
-        log(f"⚠️ خطأ CapSolver: {e}")
-        return False
-
-
-# ===============================
-# تسجيل الدخول (يُستدعى فقط عند الضرورة)
-# ===============================
-async def login_to_replit(chat_id=None) -> bool:
-    log("🔑 تسجيل الدخول إلى Replit (خطة بديلة)...")
-    if chat_id:
-        await client.send_message(chat_id, "🔑 𝙇𝙤𝙜𝙜𝙞𝙣𝙜 𝙞𝙣...")
-
-    temp_dir = tempfile.mkdtemp()
-    success = False
-
-    async with async_playwright() as p:
-        try:
-            context = await p.chromium.launch_persistent_context(
-                user_data_dir=temp_dir,
-                channel='chrome',
-                headless=False,
-                args=[
-                    '--no-sandbox', '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage', '--disable-gpu',
-                    '--disable-blink-features=AutomationControlled',
-                ],
-                viewport={'width': 1280, 'height': 720},
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                locale='en-US'
-            )
-
-            page = context.pages[0] if context.pages else await context.new_page()
-            await page.goto("https://replit.com/login", wait_until="domcontentloaded", timeout=60000)
-            await page.wait_for_timeout(3000)
-
-            # البريد
-            for sel in ["input[name='username']", "input[type='email']", "input[name='email']"]:
-                try:
-                    loc = page.locator(sel).first
-                    if await loc.count() > 0 and await loc.is_visible(timeout=2000):
-                        await loc.fill(REPLIT_EMAIL)
-                        log(f"✅ بريد: {sel}")
-                        break
-                except Exception:
-                    continue
-            await page.wait_for_timeout(1200)
-
-            # كلمة المرور
-            try:
-                pl = page.locator("input[type='password']").first
-                await pl.fill(REPLIT_PASSWORD)
-                log("✅ كلمة المرور")
-            except Exception:
-                pass
-            await page.wait_for_timeout(1000)
-
-            # حل CAPTCHA إن وُجد
-            await solve_captcha_on_page(page, chat_id)
-
-            # زر الدخول
-            for sel in ["button[type='submit']", "button:has-text('Log in')", "button:has-text('Sign in')"]:
-                try:
-                    btn = page.locator(sel).first
-                    if await btn.count() > 0 and await btn.is_visible(timeout=1500):
-                        await btn.click()
-                        log(f"✅ زر: {sel}")
-                        break
-                except Exception:
-                    continue
-
-            await page.wait_for_timeout(8000)
-            current_url = page.url
-
-            # محاولة حل CAPTCHA ثانية
-            if "/login" in current_url:
-                await solve_captcha_on_page(page, chat_id)
-                await page.wait_for_timeout(4000)
-                current_url = page.url
-
-            if "/login" not in current_url:
-                log("✅ تم تسجيل الدخول")
-                if chat_id:
-                    await client.send_message(chat_id, "✅ 𝙇𝙤𝙜𝙜𝙚𝙙 𝙞𝙣")
-                cookies = await context.cookies()
-                cleaned = [clean_cookie(c) for c in cookies if clean_cookie(c)]
-                with open(REPLIT_COOKIE_FILE, "w", encoding="utf-8") as f:
-                    json.dump(cleaned, f, indent=2)
-                log(f"✅ حفظ {len(cleaned)} كوكي")
-                success = True
-            else:
-                log("❌ فشل تسجيل الدخول")
-                if chat_id:
-                    await client.send_message(chat_id, "❌ فشل تسجيل الدخول")
-
-            await context.close()
-
-        except Exception as e:
-            log(f"❌ خطأ: {e}")
-            if chat_id:
-                await client.send_message(chat_id, f"❌ خطأ: {str(e)}")
-        finally:
-            shutil.rmtree(temp_dir, ignore_errors=True)
-
-    return success
-
-
-# ===============================
-# الضغط على Run
-# ===============================
-async def press_run_button(page, max_attempts=10):
     for attempt in range(max_attempts):
-        await page.wait_for_timeout(1500)
+        page.wait_for_timeout(1500)
 
         selectors = [
             "button:has-text('Run')",
@@ -295,277 +192,233 @@ async def press_run_button(page, max_attempts=10):
             "button[aria-label*='Run' i]",
             "[data-testid='run-button']",
             "[data-cy='run-button']",
+            "button[data-testid='run-button']",
+            ".run-button",
+            "button[class*='run']",
             "button:has(svg[viewBox*='play'])",
+            "button:has(span:has-text('Run'))",
             "header button:has-text('Run')",
         ]
+
         for selector in selectors:
             try:
                 btn = page.locator(selector).first
-                if await btn.count() > 0 and await btn.is_visible(timeout=1000):
-                    await btn.click()
-                    await page.wait_for_timeout(4000)
-                    return True
-            except Exception:
+                if btn.count() > 0 and btn.is_visible(timeout=1000):
+                    text = btn.text_content() or ""
+                    label = btn.get_attribute("aria-label") or ""
+                    if "Run" in text or "run" in text.lower() or "Run" in label:
+                        btn.click()
+                        log(f"✅ تم الضغط على زر Run")
+                        page.wait_for_timeout(5000)
+                        return True
+            except:
                 continue
 
+        # محاولة JavaScript
         try:
-            result = await page.evaluate("""
+            result = page.evaluate("""
                 () => {
                     const buttons = document.querySelectorAll('button');
-                    for (let b of buttons) {
-                        const t = (b.textContent || '').toLowerCase();
-                        const l = (b.getAttribute('aria-label') || '').toLowerCase();
-                        if (t.includes('run') || l.includes('run')) {
-                            b.click(); return 'clicked';
+                    for (let btn of buttons) {
+                        const text = (btn.textContent || '').toLowerCase();
+                        const label = (btn.getAttribute('aria-label') || '').toLowerCase();
+                        if (text.includes('run') || label.includes('run')) {
+                            btn.click();
+                            return 'clicked';
                         }
                     }
                     return 'not_found';
                 }
             """)
             if result == 'clicked':
-                await page.wait_for_timeout(4000)
+                log("✅ تم الضغط على زر Run عن طريق JavaScript")
+                page.wait_for_timeout(5000)
                 return True
-        except Exception:
+        except:
             pass
 
+        # التحقق من وجود زر Stop
         try:
             stop_btn = page.locator("button:has-text('Stop')").first
-            if await stop_btn.count() > 0 and await stop_btn.is_visible(timeout=1500):
+            if stop_btn.count() > 0 and stop_btn.is_visible(timeout=2000):
+                log("✅ المشروع شغال بالفعل")
                 return True
-        except Exception:
+        except:
             pass
 
         if attempt < max_attempts - 1:
-            await page.reload(wait_until="domcontentloaded")
-            await page.wait_for_timeout(2000)
+            page.reload(wait_until="domcontentloaded")
+            page.wait_for_timeout(2000)
 
     return False
 
 
-# ===============================
-# استخراج Webview
-# ===============================
-async def get_webview_url(page):
+def get_webview_url(page):
+    """استخراج رابط Webview جديد"""
+    log("🔍 البحث عن رابط Webview...")
+
+    # البحث في iframes
     try:
-        iframes = await page.locator("iframe[src*='replit.dev']").all()
+        iframes = page.locator("iframe[src*='replit.dev']").all()
         for iframe in iframes:
-            src = await iframe.get_attribute("src") or ""
-            m = re.search(WEBVIEW_PATTERN, src)
-            if m:
-                return m.group(0)
-    except Exception:
+            src = iframe.get_attribute("src") or ""
+            match = re.search(WEBVIEW_PATTERN, src)
+            if match:
+                url = match.group(0)
+                log(f"✅ تم العثور على رابط Webview: {url}")
+                return url
+    except:
         pass
+
+    # البحث في النص
     try:
-        body = await page.text_content("body") or ""
+        body = page.text_content("body") or ""
         matches = re.findall(WEBVIEW_PATTERN, body)
         if matches:
-            return matches[0]
-    except Exception:
+            url = matches[0]
+            log(f"✅ تم العثور على رابط Webview: {url}")
+            return url
+    except:
         pass
+
+    # البحث باستخدام JavaScript
     try:
-        result = await page.evaluate("""
+        result = page.evaluate("""
             () => {
                 const text = document.body.innerText || '';
-                const m = text.match(/https?:\\/\\/[a-f0-9\\-]+\\.replit\\.dev:\\d+/);
-                if (m) return m[0];
+                const match = text.match(/https?:\\/\\/[a-f0-9\\-]+\\.replit\\.dev:\\d+/);
+                if (match) return match[0];
+
                 const iframes = document.querySelectorAll('iframe');
-                for (let f of iframes) {
-                    const mm = (f.src || '').match(/https?:\\/\\/[a-f0-9\\-]+\\.replit\\.dev:\\d+/);
-                    if (mm) return mm[0];
+                for (let iframe of iframes) {
+                    const match = (iframe.src || '').match(/https?:\\/\\/[a-f0-9\\-]+\\.replit\\.dev:\\d+/);
+                    if (match) return match[0];
                 }
                 return null;
             }
         """)
         if result:
+            log(f"✅ تم العثور على رابط Webview: {result}")
             return result
-    except Exception:
+    except:
         pass
+
     return None
 
 
-# ===============================
-# ✅ العملية الرئيسية (Cookies first)
-# ===============================
-async def run_replit(chat_id, force_login: bool = False):
-    await client.send_message(chat_id, "🌐 𝙊𝙥𝙚𝙣𝙞𝙣𝙜 𝙍𝙚𝙥𝙡𝙞𝙩...")
+def run_once():
+    """تشغيل دورة واحدة فقط"""
+    log("🚀 بدء دورة جديدة (عبر البروكسي)")
 
-    # ✅ 1) تحديد المصدر: كوكيز موجودة أم تسجيل دخول؟
-    use_cookies = False
-    if not force_login and cookies_file_exists_and_valid():
-        log("✅ ملف الكوكيز موجود وصالح — سنستخدمه مباشرة")
-        await client.send_message(chat_id, "🍪 𝙐𝙨𝙞𝙣𝙜 𝙚𝙭𝙞𝙨𝙩𝙞𝙣𝙜 𝙘𝙤𝙤𝙠𝙞𝙚𝙨...")
-        use_cookies = True
-    else:
-        log("⚠️ لا توجد كوكيز صالحة — سنسجّل الدخول")
-        ok = await login_to_replit(chat_id)
-        if not ok:
-            await client.send_message(chat_id, "❌ فشل تسجيل الدخول.")
-            return
-        use_cookies = True
-
-    cookies = load_any_cookies()
+    cookies = load_cookies_for_playwright()
     if not cookies:
-        await client.send_message(chat_id, "❌ لا توجد كوكيز قابلة للاستخدام.")
-        return
+        log("❌ لا توجد كوكيز")
+        return False
 
-    temp_dir = tempfile.mkdtemp()
     webview_url = None
 
-    async with async_playwright() as p:
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            proxy=PLAYWRIGHT_PROXY,  # 👈 تمرير البروكسي للمتصفح
+        )
+        context = browser.new_context(
+            viewport={"width": 1280, "height": 720},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            # 👇 تجاهل أخطاء شهادة البروكسي (بعض البروكسيات تحتاج هذا)
+            ignore_https_errors=True,
+        )
+        context.add_cookies(cookies)
+        page = context.new_page()
+
+        # تسجيل الطلبات للتصحيح (اختياري)
+        page.on("requestfailed", lambda req: log(f"⚠️ فشل الطلب: {req.url} - {req.failure}"))
+
+        log(f"📂 فتح المشروع عبر البروكسي")
         try:
-            context = await p.chromium.launch_persistent_context(
-                user_data_dir=temp_dir,
-                channel='chrome',
-                headless=False,
-                args=[
-                    '--no-sandbox', '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage', '--disable-gpu',
-                    '--disable-blink-features=AutomationControlled',
-                    '--disable-infobars', '--window-size=1920,1080'
-                ],
-                viewport={'width': 1920, 'height': 1080},
-                locale='en-US'
-            )
-
-            added = 0
-            for ck in cookies:
-                try:
-                    await context.add_cookies([ck])
-                    added += 1
-                except Exception:
-                    continue
-            log(f"🍪 تم إضافة {added}/{len(cookies)} كوكي")
-
-            page = context.pages[0] if context.pages else await context.new_page()
-            await page.goto(REPLIT_PROJECT_URL, wait_until="domcontentloaded", timeout=60000)
-            await page.wait_for_timeout(5000)
-
-            # ✅ 2) إذا فشلت الكوكيز → سجّل الدخول كخطة بديلة
-            if "/login" in page.url:
-                log("⚠️ الكوكيز منتهية — تفعيل الخطة البديلة (تسجيل دخول)")
-                await client.send_message(chat_id, "⚠️ 𝘾𝙤𝙤𝙠𝙞𝙚𝙨 𝙚𝙭𝙥𝙞𝙧𝙚𝙙, 𝙛𝙖𝙡𝙡𝙞𝙣𝙜 𝙗𝙖𝙘𝙠 𝙩𝙤 𝙡𝙤𝙜𝙞𝙣...")
-                await context.close()
-                shutil.rmtree(temp_dir, ignore_errors=True)
-
-                ok = await login_to_replit(chat_id)
-                if not ok:
-                    await client.send_message(chat_id, "❌ فشل تسجيل الدخول البديل.")
-                    return
-                # إعادة التشغيل بالكوكيز الجديدة
-                await run_replit(chat_id, force_login=False)
-                return
-
-            await client.send_message(chat_id, "✅ 𝙇𝙤𝙜𝙜𝙚𝙙 𝙞𝙣 𝙩𝙤 𝙍𝙚𝙥𝙡𝙞𝙩")
-
-            if await press_run_button(page):
-                await client.send_message(chat_id, "▶️ 𝙍𝙪𝙣 𝙥𝙧𝙚𝙨𝙨𝙚𝙙...")
-            else:
-                await client.send_message(chat_id, "⚠️ 𝙁𝙖𝙞𝙡𝙚𝙙 𝙩𝙤 𝙥𝙧𝙚𝙨𝙨 𝙍𝙪𝙣")
-
-            for _ in range(10):
-                webview_url = await get_webview_url(page)
-                if webview_url:
-                    break
-                await page.wait_for_timeout(2000)
-
-            await context.close()
-
+            page.goto(PROJECT_URL, wait_until="domcontentloaded", timeout=90000)
         except Exception as e:
-            await client.send_message(chat_id, f"❌ خطأ: {str(e)}")
-        finally:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+            log(f"❌ خطأ في فتح المشروع: {e}")
+            browser.close()
+            return False
 
+        page.wait_for_timeout(5000)
+
+        if "/login" in page.url:
+            log("❌ الكوكيز منتهية")
+            browser.close()
+            return False
+
+        log("✅ تم الدخول إلى المشروع")
+
+        # تشغيل المشروع
+        if press_run_button_with_retry(page, max_attempts=10):
+            log("✅ تم تشغيل المشروع")
+        else:
+            log("⚠️ فشل تشغيل المشروع")
+
+        # البحث عن رابط Webview
+        for attempt in range(5):
+            webview_url = get_webview_url(page)
+            if webview_url:
+                break
+            page.wait_for_timeout(2000)
+
+        browser.close()
+
+    # حفظ الرابط
     if webview_url:
-        try:
-            with open("webview_url.txt", "w", encoding="utf-8") as f:
-                f.write(f"{webview_url}\n")
-                f.write(f"التحديث: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        except Exception:
-            pass
-        await client.send_message(
-            chat_id,
-            f"✅ **𝙃𝙚𝙧𝙚 𝙞𝙨 𝙮𝙤𝙪𝙧 𝙒𝙚𝙗𝙫𝙞𝙚𝙬 𝙡𝙞𝙣𝙠:**\n\n`{webview_url}`"
-        )
+        log(f"🌐 رابط Webview: {webview_url}")
+        with open("webview_url.txt", "w") as f:
+            f.write(f"{webview_url}\n")
+            f.write(f"التحديث: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+        print("\n" + "="*60)
+        print(f"🌐 {webview_url}")
+        print("="*60 + "\n")
+        return True
     else:
-        await client.send_message(chat_id, "⚠️ لم يتم العثور على رابط Webview.")
+        log("⚠️ لم يتم العثور على رابط Webview")
+        return False
 
 
-# ===============================
-# أوامر تلغرام
-# ===============================
-@client.on(events.NewMessage(pattern=r"^/start$"))
-async def start(event):
-    welcome_msg = (
-        "**إذا غامَرْتَ في شَرَفٍ مَرُومِ  ***  فَلا تَقنَعْ بما دونَ النّجومِ** ☁️✨\n\n"
-        "🔹 `/run` — تشغيل المشروع (🍪 كوكيز أولاً)\n"
-        "🔹 `/login` — تسجيل دخول يدوي (خطة بديلة)\n"
-        "🔹 `/relogin` — حذف الكوكيز + تسجيل دخول جديد\n"
-        "🔹 `/cookies` — فحص حالة ملف الكوكيز\n"
-        "🔹 `/balance` — رصيد CapSolver\n\n"
-        "@AM2_D3"
-    )
-    await event.reply(welcome_msg)
+def main():
+    """الحلقة الرئيسية مع Keep Alive"""
+    log("🔥 بدء التشغيل مع Keep Alive + Proxy")
+    log(f"⏱️ سيتم إعادة التشغيل كل {REFRESH_INTERVAL_SECONDS} ثانية")
+    log(f"🌐 خادم Keep Alive على المنفذ {KEEP_ALIVE_PORT}")
+    log(f"🔒 البروكسي: {PLAYWRIGHT_PROXY['server']}")
+    log("📌 يمكنك فتح ترمينال آخر للعمل بشكل طبيعي")
 
+    # اختبار البروكسي أولاً
+    test_proxy()
 
-@client.on(events.NewMessage(pattern=r"^/run$"))
-async def run_cmd(event):
-    asyncio.create_task(run_replit(event.chat_id))
+    # تشغيل خادم Keep Alive في خيط منفصل
+    keep_alive_thread = threading.Thread(target=run_keep_alive_server, daemon=True)
+    keep_alive_thread.start()
 
-
-@client.on(events.NewMessage(pattern=r"^/login$"))
-async def login_cmd(event):
-    asyncio.create_task(login_to_replit(event.chat_id))
-
-
-@client.on(events.NewMessage(pattern=r"^/relogin$"))
-async def relogin_cmd(event):
-    async def _task():
+    # بدء الحلقة الرئيسية
+    while True:
         try:
-            if os.path.exists(REPLIT_COOKIE_FILE):
-                os.remove(REPLIT_COOKIE_FILE)
-                await client.send_message(event.chat_id, "🗑️ تم حذف الكوكيز القديمة.")
-        except Exception:
-            pass
-        ok = await login_to_replit(event.chat_id)
-        if ok:
-            await client.send_message(event.chat_id, "✅ جاهز، استخدم `/run`.")
-    asyncio.create_task(_task())
+            run_once()
 
+            log(f"⏳ الانتظار {REFRESH_INTERVAL_SECONDS} ثانية...")
+            for i in range(REFRESH_INTERVAL_SECONDS, 0, -1):
+                if i % 5 == 0 or i <= 3:
+                    log(f"⏳ {i}s")
+                time.sleep(1)
 
-@client.on(events.NewMessage(pattern=r"^/cookies$"))
-async def cookies_cmd(event):
-    async def _task():
-        if not os.path.exists(REPLIT_COOKIE_FILE):
-            await client.send_message(event.chat_id, "❌ ملف `cookies.txt` غير موجود.")
-            return
-        size = os.path.getsize(REPLIT_COOKIE_FILE)
-        cookies = load_any_cookies()
-        valid = cookies_file_exists_and_valid()
-        status = "✅ صالح" if valid else "⚠️ غير صالح"
-        await client.send_message(
-            event.chat_id,
-            f"📁 **حالة ملف الكوكيز:**\n"
-            f"▪️ الحجم: `{size}` بايت\n"
-            f"▪️ عدد الكوكيز: `{len(cookies)}`\n"
-            f"▪️ الحالة: {status}"
-        )
-    asyncio.create_task(_task())
+            log("🔄 بدء دورة جديدة...")
+            print("-" * 50)
 
-
-@client.on(events.NewMessage(pattern=r"^/balance$"))
-async def balance_cmd(event):
-    async def _task():
-        if not CAPSOLVER_AVAILABLE:
-            await client.send_message(event.chat_id, "❌ capsolver-core غير مثبّت.")
-            return
-        try:
-            cap = create_capsolver(api_key=CAPSOLVER_API_KEY)
-            balance = await cap.get_balance()
-            await client.send_message(event.chat_id, f"💰 رصيد CapSolver: `${balance}`")
+        except KeyboardInterrupt:
+            log("⏹️ تم الإيقاف")
+            break
         except Exception as e:
-            await client.send_message(event.chat_id, f"❌ خطأ: {str(e)}")
-    asyncio.create_task(_task())
+            log(f"❌ خطأ: {e}")
+            time.sleep(3)
 
 
-print("𝙘𝙤𝙣𝙣𝙚𝙘𝙩𝙚𝙙...")
-client.run_until_disconnected()
+if __name__ == "__main__":
+    signal.signal(signal.SIGINT, lambda sig, frame: sys.exit(0))
+    main()
